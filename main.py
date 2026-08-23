@@ -61,7 +61,6 @@ async def notify_log(text):
     except Exception as e:
         print(f"Log xatosi: {e}")
 
-# ==================== [BLOK 1: STORY TRACKER] ====================
 async def check_stories():
     while True:
         try:
@@ -116,7 +115,6 @@ async def check_stories():
         except Exception: pass
         await asyncio.sleep(10)
 
-# ==================== [BLOK 2: 24/7 ONLINE] ====================
 async def online_worker():
     global ONLINE_CHAT_ID
     while True:
@@ -237,30 +235,6 @@ async def handle_commands(event):
             f"📸 **Kuzatuvdagi Storylar:** {len(db.get('story_targets', {}))} ta"
         )
 
-# ==================== [BLOK 3: MUSTAQIL AUTO-READ] ====================
-AUTO_READ_STATUS = False
-
-@client.on(events.NewMessage(outgoing=True))
-async def auto_read_commands_isolated(event):
-    global AUTO_READ_STATUS
-    txt = (event.raw_text or "").strip()
-    if txt == ".read":
-        AUTO_READ_STATUS = True
-        await event.edit("👀 **Auto-Read (Avto-o'qish) yoqildi!**\nShaxsiy chatlardan kelgan yangi xabarlar kelishi bilan o'qilgan qilib boriladi.")
-    elif txt == ".unread":
-        AUTO_READ_STATUS = False
-        await event.edit("🙈 **Auto-Read (Avto-o'qish) o'chirildi.**")
-
-@client.on(events.NewMessage(incoming=True))
-async def auto_read_listener_isolated(event):
-    global AUTO_READ_STATUS
-    if AUTO_READ_STATUS and event.is_private:
-        try:
-            await event.mark_read()
-        except Exception:
-            pass
-
-# ==================== [SERVER VA ISHGA TUSHIRISH] ====================
 async def handle_ping_web(request):
     return web.Response(text="OK")
 
@@ -274,7 +248,7 @@ async def main():
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
     
     asyncio.create_task(check_stories())
-    print("Bot 3 ta alohida blok bilan ishga tushdi!")
+    print("Asl holat to'liq tiklandi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
