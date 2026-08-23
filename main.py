@@ -31,7 +31,7 @@ def load_data():
                 return json.load(f)
         except: pass
     return {
-        "story_targets": {},  # { "user_id": { "type": "custom/emoji", "val": "..." } }
+        "story_targets": {}, 
         "viewed_stories": {}
     }
 
@@ -88,11 +88,11 @@ async def check_stories():
                                 time_str = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
                                 
                                 log_text = (
-                                    f"🔥 **Yangi Storiisiga Reaksiya Bosildi!**\n\n"
+                                    f"🔥 **Storyga Reaksiya Bosildi!**\n\n"
                                     f"👤 **Foydalanuvchi:** {name}\n"
                                     f"🔗 **Username/ID:** `{username}` (`{ent.id}`)\n"
                                     f"✨ **Reaksiya turi:** `{react_type}`\n"
-                                    f"🆔 **Qiymati/IDsi:** `{react_val}`\n"
+                                    f"🆔 **Emoji/Doc ID:** `{react_val}`\n"
                                     f"📊 **Story ID:** `{s.id}`\n"
                                     f"⏰ **Vaqti:** `{time_str}`"
                                 )
@@ -113,11 +113,10 @@ async def commands(event):
     
     if cmd == ".story":
         if len(parts) < 2:
-            await event.edit("❌ Foydalanish: `.story <user_id_yoki_username> [emoji_yoki_id]`\nYoki shunchaki emoji yuboring.")
+            await event.edit("❌ Xato! Ishlatish: `.story <user_id>` (Xabarga o'zingizning premium emojingizni qo'shib yuboring).")
             return
             
         target_arg = parts[1]
-        extra_arg = parts[2] if len(parts) > 2 else ""
         
         try:
             ent = await client.get_entity(int(target_arg) if target_arg.lstrip('-').isdigit() else target_arg)
@@ -125,7 +124,7 @@ async def commands(event):
             react_type = "emoji"
             react_val = "❤️"
             
-            # Agar xabarda maxsus custom emoji entity (ID) bo'lsa
+            # Xabar ichidan custom (premium) emojining ID'sini qidirib topish
             if event.message.entities:
                 for ent_item in event.message.entities:
                     if isinstance(ent_item, MessageEntityCustomEmoji):
@@ -133,17 +132,15 @@ async def commands(event):
                         react_val = str(ent_item.document_id)
                         break
             
-            # Agar qo'shimcha argument berilgan bo'lsa
-            if extra_arg:
+            # Agar ikkinchi argument raqam (ID) bo'lib yozilgan bo'lsa
+            if len(parts) > 2:
+                extra_arg = parts[2]
                 if extra_arg.isdigit():
                     react_type = "custom"
                     react_val = extra_arg
                 else:
                     react_type = "emoji"
                     react_val = extra_arg
-            elif not event.message.entities and not extra_arg:
-                # Agar faqat .story id yozilgan bo'lsa va oddiy belgi bo'lsa
-                pass
 
             db.setdefault("story_targets", {})[str(ent.id)] = {
                 "type": react_type,
@@ -153,10 +150,10 @@ async def commands(event):
             save_data(db)
             
             await event.edit(
-                f"✅ **Muvaffaqiyatli kuzatuvga olindi!**\n\n"
+                f"✅ **Muvaffaqiyatli qo'shildi!**\n\n"
                 f"👤 **Kimga:** {get_display_name(ent)} (`{ent.id}`)\n"
                 f"✨ **Reaksiya Turi:** `{react_type}`\n"
-                f"🔑 **Reaksiya Qiymati:** `{react_val}`"
+                f"🔑 **ID / Qiymat:** `{react_val}`"
             )
         except Exception as e:
             await event.edit(f"❌ Xatolik: {e}")
@@ -172,7 +169,7 @@ async def commands(event):
             if str(ent.id) in targets:
                 del targets[str(ent.id)]
                 save_data(db)
-                await event.edit(f"🛑 **Muvaffaqiyatli o'chirildi:** {get_display_name(ent)} (`{ent.id}`)")
+                await event.edit(f"🛑 **Muvaffaqiyatli to'xtatildi:** {get_display_name(ent)} (`{ent.id}`)")
             else:
                 await event.edit("⚠️ Bu ID kuzatuv ro'yxatida topilmadi.")
         except Exception as e:
@@ -184,7 +181,7 @@ async def commands(event):
             await event.edit("📊 Hozircha hech kim kuzatuvda yo'q.")
             return
             
-        text = f"📊 **Hozirgi Kuzatuvdagi Storylar ({len(targets)} ta):**\n\n"
+        text = f"📊 **Kuzatuvdagi Storylar ({len(targets)} ta):**\n\n"
         for uid, info in targets.items():
             name = info.get("name", "Noma'lum")
             rtype = info.get("type")
@@ -206,7 +203,7 @@ async def main():
     await client.start()
     asyncio.create_task(run_web())
     asyncio.create_task(check_stories())
-    print("Story Bot yangilandi va ishga tushdi!")
+    print("Story Bot yangilandi!")
 
 with client:
     client.loop.run_until_complete(main())
