@@ -107,7 +107,10 @@ async def handle_commands(event):
     parts = txt.strip().split()
     cmd = parts[0]
 
-    if cmd == ".story":
+    if cmd == ".ping":
+        await event.edit("🏓 **Pong! Bot faol ishlayapti.**")
+
+    elif cmd == ".story":
         if len(parts) < 3:
             await event.edit("❌ **Ishlatish:** `.story <id/@username> <emoji_id>`")
             return
@@ -122,7 +125,6 @@ async def handle_commands(event):
         try:
             ent = await client.get_entity(int(target_arg) if target_arg.lstrip('-').isdigit() else target_arg)
             
-            # Eski ko'rilganlar keshi tozalanadi, toki live storilar darhol ko'rilsin
             if str(ent.id) in db.get("viewed_stories", {}):
                 db["viewed_stories"][str(ent.id)] = []
 
@@ -153,7 +155,7 @@ async def handle_commands(event):
                 save_data(db)
                 await event.edit(f"🛑 **To'xtatildi:** {get_display_name(ent)} (`{ent.id}`)")
             else:
-                await event.edit("⚠️ Bu foydalanuvchi kuzatuv ro'yxatida topilmadi.")
+                await event.edit("⚠️ Bu foydalanuvchi topilmadi.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: {e}")
 
@@ -170,17 +172,14 @@ async def handle_commands(event):
             text += f"👤 **Ism:** {name}\n🆔 **ID:** `{uid}`\n✨ **Emoji ID:** `{emoji_id}`\n-------------------\n"
         await event.edit(text)
 
-    elif cmd == ".ping":
-        await event.edit("🏓 **Pong! Bot to'liq ishlayapti.**")
-
-async def handle_ping(request):
+async def handle_ping_web(request):
     return web.Response(text="OK")
 
 async def main():
     await client.start()
     
     app = web.Application()
-    app.router.add_get('/', handle_ping)
+    app.router.add_get('/', handle_ping_web)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
@@ -190,5 +189,4 @@ async def main():
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    asyncio.run(main())
