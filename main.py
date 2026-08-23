@@ -6,7 +6,7 @@ from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import (
-    ReactionEmoji, ReactionCustomEmoji
+    ReactionEmoji, ReactionCustomEmoji, MessageEntityCustomEmoji
 )
 from telethon.tl.functions.stories import (
     GetPeerStoriesRequest, ReadStoriesRequest, SendReactionRequest
@@ -16,7 +16,7 @@ from telethon.utils import get_display_name
 API_ID = int(os.environ.get("API_ID", 32261789))
 API_HASH = os.environ.get("API_HASH", "06254a37741c127fd669909f57e67168")
 SESSION_STRING = os.environ.get("SESSION_STRING")
-LOG_CHANNEL_ID = -1004327250392  # Siz bergan log kanal IDsi
+LOG_CHANNEL_ID = -1004327250392
 PORT = int(os.environ.get("PORT", 8080))
 
 UZ_TZ = timezone(timedelta(hours=5))
@@ -31,7 +31,7 @@ def load_data():
                 return json.load(f)
         except: pass
     return {
-        "story_targets": {},  # { "user_id": "emoji_or_id" }
+        "story_targets": {},  # { "user_id": { "type": "custom/emoji", "val": "..." } }
         "viewed_stories": {}
     }
 
@@ -46,13 +46,13 @@ async def notify_log(text):
     try:
         return await client.send_message(LOG_CHANNEL_ID, text)
     except Exception as e:
-        print(f"Log kanalga yuborish xatosi: {e}")
+        print(f"Log kanal xatosi: {e}")
         return None
 
 async def check_stories():
     while True:
         try:
-            for uid_str, reaction_val in list(db.get("story_targets", {}).items()):
+            for uid_str, info in list(db.get("story_targets", {}).items()):
                 try:
                     uid = int(uid_str) if uid_str.lstrip('-').isdigit() else uid_str
                     ent = await client.get_entity(uid)
@@ -64,12 +64,14 @@ async def check_stories():
                             if s.id not in viewed_list:
                                 await client(ReadStoriesRequest(peer=ent, max_id=s.id))
                                 
-                                # Reaksiyani aniqlash
+                                react_type = info.get("type")
+                                react_val = info.get("val")
+                                
                                 try:
-                                    if reaction_val.isdigit():
-                                        reaction = ReactionCustomEmoji(document_id=int(reaction_val))
+                                    if react_type == "custom":
+                                        reaction = ReactionCustomEmoji(document_id=int(react_val))
                                     else:
-                                        reaction = ReactionEmoji(emoticon=reaction_val)
+                                        reaction = ReactionEmoji(emoticon=react_val)
                                         
                                     await client(SendReactionRequest(peer=ent, story_id=s.id, reaction=reaction))
                                 except Exception as err:
@@ -81,19 +83,18 @@ async def check_stories():
                                 viewed_list.append(s.id)
                                 save_data(db)
                                 
-                                # Log kanalga batafsil yuborish
                                 name = get_display_name(ent)
                                 username = f"@{ent.username}" if hasattr(ent, 'username') and ent.username else "Mavjud emas"
                                 time_str = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
                                 
                                 log_text = (
-                                    f"📸 **Yangi Story Kuzatildi va Reaksiya Bosildi!**\n\n"
+                                    f"🔥 **Yangi Storiisiga Reaksiya Bosildi!**\n\n"
                                     f"👤 **Foydalanuvchi:** {name}\n"
-                                    f"🔗 **Username:** {username}\n"
-                                    f"🆔 **ID:** `{ent.id}`\n"
-                                    f"✨ **Bosilgan reaksiya:** `{reaction_val}`\n"
+                                    f"🔗 **Username/ID:** `{username}` (`{ent.id}`)\n"
+                                    f"✨ **Reaksiya turi:** `{react_type}`\n"
+                                    f"🆔 **Qiymati/IDsi:** `{react_val}`\n"
                                     f"📊 **Story ID:** `{s.id}`\n"
-                                    f"⏰ **Vaqti:** {time_str}"
+                                    f"⏰ **Vaqti:** `{time_str}`"
                                 )
                                 await notify_log(log_text)
                 except Exception as e:
@@ -107,61 +108,92 @@ async def check_stories():
 async def commands(event):
     global db
     txt = event.raw_text.strip()
-    
-    # Agar xabar reply (javob) qilingan bo'lsa, o'sha odamni olish
-    reply = await event.get_reply_message()
-    
     parts = txt.split(maxsplit=2)
     cmd = parts[0] if parts else ""
     
     if cmd == ".story":
-        arg = parts[1] if len(parts) > 1 else ""
-        emoji_arg = parts[2] if len(parts) > 2 else "❤️"
+        if len(parts) < 2:
+            await event.edit("❌ Foydalanish: `.story <user_id_yoki_username> [emoji_yoki_id]`\nYoki shunchaki emoji yuboring.")
+            return
+            
+        target_arg = parts[1]
+        extra_arg = parts[2] if len(parts) > 2 else ""
         
         try:
-            target = None
-            if reply and not arg:
-                target = reply.sender_id
-            elif arg.lstrip('-').isdigit():
-                target = int(arg)
-            elif arg:
-                target = arg
-            else:
-                await event.edit("❌ Foydalanuvchi username yoki ID sini yozing (yoki xabarga reply qiling).")
-                return
+            ent = await client.get_entity(int(target_arg) if target_arg.lstrip('-').isdigit() else target_arg)
+            
+            react_type = "emoji"
+            react_val = "❤️"
+            
+            # Agar xabarda maxsus custom emoji entity (ID) bo'lsa
+            if event.message.entities:
+                for ent_item in event.message.entities:
+                    if isinstance(ent_item, MessageEntityCustomEmoji):
+                        react_type = "custom"
+                        react_val = str(ent_item.document_id)
+                        break
+            
+            # Agar qo'shimcha argument berilgan bo'lsa
+            if extra_arg:
+                if extra_arg.isdigit():
+                    react_type = "custom"
+                    react_val = extra_arg
+                else:
+                    react_type = "emoji"
+                    react_val = extra_arg
+            elif not event.message.entities and not extra_arg:
+                # Agar faqat .story id yozilgan bo'lsa va oddiy belgi bo'lsa
+                pass
 
-            ent = await client.get_entity(target)
-            db.setdefault("story_targets", {})[str(ent.id)] = emoji_arg
+            db.setdefault("story_targets", {})[str(ent.id)] = {
+                "type": react_type,
+                "val": react_val,
+                "name": get_display_name(ent)
+            }
             save_data(db)
-            await event.edit(f"✅ **Muvaffaqiyatli qo'shildi!**\n👤 {get_display_name(ent)} (`{ent.id}`)\n✨ Reaksiya: `{emoji_arg}`")
+            
+            await event.edit(
+                f"✅ **Muvaffaqiyatli kuzatuvga olindi!**\n\n"
+                f"👤 **Kimga:** {get_display_name(ent)} (`{ent.id}`)\n"
+                f"✨ **Reaksiya Turi:** `{react_type}`\n"
+                f"🔑 **Reaksiya Qiymati:** `{react_val}`"
+            )
         except Exception as e:
-            await event.edit(f"❌ Xatolik yuz berdi: {e}")
+            await event.edit(f"❌ Xatolik: {e}")
 
     elif cmd == ".stop":
-        arg = parts[1] if len(parts) > 1 else ""
+        if len(parts) < 2:
+            await event.edit("❌ To'xtatish uchun ID yozing: `.stop <user_id>`")
+            return
+        target_arg = parts[1]
         try:
-            target = reply.sender_id if (reply and not arg) else (int(arg) if arg.lstrip('-').isdigit() else arg)
-            ent = await client.get_entity(target)
+            ent = await client.get_entity(int(target_arg) if target_arg.lstrip('-').isdigit() else target_arg)
             targets = db.get("story_targets", {})
             if str(ent.id) in targets:
                 del targets[str(ent.id)]
                 save_data(db)
-                await event.edit(f"🛑 **To'xtatildi:** {get_display_name(ent)}")
+                await event.edit(f"🛑 **Muvaffaqiyatli o'chirildi:** {get_display_name(ent)} (`{ent.id}`)")
             else:
-                await event.edit("⚠️ Bu foydalanuvchi kuzatuv ro'yxatida topilmadi.")
+                await event.edit("⚠️ Bu ID kuzatuv ro'yxatida topilmadi.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: {e}")
 
     elif cmd == ".stat":
         targets = db.get("story_targets", {})
-        count = len(targets)
-        text = f"📊 **Story Bot Statistikasi:**\n📸 Kuzatuvdagilar: `{count} ta`\n\n"
-        for uid in targets:
-            text += f"• `ID: {uid}` | Reaksiya: `{targets[uid]}`\n"
+        if not targets:
+            await event.edit("📊 Hozircha hech kim kuzatuvda yo'q.")
+            return
+            
+        text = f"📊 **Hozirgi Kuzatuvdagi Storylar ({len(targets)} ta):**\n\n"
+        for uid, info in targets.items():
+            name = info.get("name", "Noma'lum")
+            rtype = info.get("type")
+            rval = info.get("val")
+            text += f"👤 **Ism:** {name}\n🆔 **ID:** `{uid}`\n✨ **Reaksiya:** `{rtype}` (`{rval}`)\n-------------------\n"
         await event.edit(text)
 
 async def handle_ping(request):
-    return web.Response(text="Bot is running perfectly")
+    return web.Response(text="Bot is running")
 
 async def run_web():
     app = web.Application()
@@ -174,7 +206,7 @@ async def main():
     await client.start()
     asyncio.create_task(run_web())
     asyncio.create_task(check_stories())
-    print("Mukammal Story Bot ishga tushdi!")
+    print("Story Bot yangilandi va ishga tushdi!")
 
 with client:
     client.loop.run_until_complete(main())
