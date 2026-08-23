@@ -22,7 +22,6 @@ BOT_START_TIME = time.time()
 ONLINE_START_TIME = None
 ONLINE_CHAT_ID = None
 ONLINE_TASK = None
-AUTO_READ_ENABLED = False
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -62,7 +61,6 @@ async def notify_log(text):
     except Exception as e:
         print(f"Log xatosi: {e}")
 
-# ----------------- 1. STORY TRACKER LOOP -----------------
 async def check_stories():
     while True:
         try:
@@ -117,7 +115,6 @@ async def check_stories():
         except Exception: pass
         await asyncio.sleep(10)
 
-# ----------------- 2. 24/7 ONLINE LOOP -----------------
 async def online_worker():
     global ONLINE_CHAT_ID
     while True:
@@ -131,20 +128,9 @@ async def online_worker():
             print(f"Online xabari xatosi: {e}")
         await asyncio.sleep(29)
 
-# ----------------- 3. AUTO READ PERSONAL MESSAGES -----------------
-@client.on(events.NewMessage(incoming=True, func=lambda e: e.is_private))
-async def auto_read_private_handler(event):
-    global AUTO_READ_ENABLED
-    if AUTO_READ_ENABLED:
-        try:
-            await event.mark_read()
-        except Exception as e:
-            print(f"Auto read xatosi: {e}")
-
-# ----------------- COMMANDS -----------------
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
-    global db, ONLINE_CHAT_ID, ONLINE_START_TIME, ONLINE_TASK, AUTO_READ_ENABLED
+    global db, ONLINE_CHAT_ID, ONLINE_START_TIME, ONLINE_TASK
     txt = event.raw_text or ""
     if not txt.startswith("."):
         return
@@ -233,14 +219,6 @@ async def handle_commands(event):
         ONLINE_START_TIME = None
         await event.edit("🔴 **24/7 Online rejimi to'xtatildi.**")
 
-    elif cmd == ".read":
-        AUTO_READ_ENABLED = True
-        await event.edit("👀 **Avtomatik o'qish (Auto-Read) yoqildi!**\nBarcha shaxsiy chatlardan kelgan yangi xabarlar kelishi bilanoq o'qilgan qilinadi.")
-
-    elif cmd == ".unread":
-        AUTO_READ_ENABLED = False
-        await event.edit("🙈 **Avtomatik o'qish (Auto-Read) to'xtatildi.**")
-
     elif cmd == ".info":
         uptime_str = format_duration(time.time() - BOT_START_TIME)
         
@@ -250,13 +228,10 @@ async def handle_commands(event):
         else:
             status_online = "🔴 **O'chiq**"
 
-        status_read = "🟢 **Yoqilgan**" if AUTO_READ_ENABLED else "🔴 **O'chirilgan**"
-
         await event.edit(
             f"ℹ️ **Tizim Ma'lumotlari:**\n\n"
             f"⏳ **Skript ishlash vaqti (Uptime):** {uptime_str}\n"
             f"📶 **24/7 Online holati:** {status_online}\n"
-            f"👀 **Auto-Read holati:** {status_read}\n"
             f"📸 **Kuzatuvdagi Storylar:** {len(db.get('story_targets', {}))} ta"
         )
 
@@ -273,7 +248,7 @@ async def main():
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
     
     asyncio.create_task(check_stories())
-    print("Bot 3 ta modul bilan to'liq ishga tushdi!")
+    print("Bot 100% asl holatida ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
