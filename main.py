@@ -5,9 +5,7 @@ from datetime import datetime, timezone, timedelta
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import (
-    ReactionEmoji, ReactionCustomEmoji
-)
+from telethon.tl.types import ReactionCustomEmoji, ReactionEmoji
 from telethon.tl.functions.stories import (
     GetPeerStoriesRequest, ReadStoriesRequest, SendReactionRequest
 )
@@ -64,19 +62,15 @@ async def check_stories():
                             if s.id not in viewed_list:
                                 await client(ReadStoriesRequest(peer=ent, max_id=s.id))
                                 
-                                r_type = info.get("type", "emoji")
-                                r_val = str(info.get("val", "❤️"))
+                                emoji_id = str(info.get("emoji_id"))
                                 
-                                # Reaksiyani aniq tayyorlash
-                                if r_type == "custom" or r_val.isdigit():
-                                    reaction = [ReactionCustomEmoji(document_id=int(r_val))]
-                                else:
-                                    reaction = [ReactionEmoji(emoticon=r_val)]
+                                # Aniq Custom Emoji ID orqali reaksiya yuborish
+                                reaction = [ReactionCustomEmoji(document_id=int(emoji_id))]
                                 
                                 try:
                                     await client(SendReactionRequest(peer=ent, story_id=s.id, reaction=reaction))
                                 except Exception as err:
-                                    print(f"Reaksiya xatosi: {err}")
+                                    print(f"Reaksiya xatosi: {err}, standart yurak sinab ko'rilmoqda...")
                                     try:
                                         await client(SendReactionRequest(peer=ent, story_id=s.id, reaction=[ReactionEmoji(emoticon='❤️')]))
                                     except: pass
@@ -89,12 +83,11 @@ async def check_stories():
                                 time_str = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
                                 
                                 log_text = (
-                                    f"🔥 **Yangi Storiisiga Reaksiya Bosildi!**\n\n"
+                                    f"🔥 **Storyga Reaksiya Bosildi!**\n\n"
                                     f"👤 **Foydalanuvchi:** {name}\n"
                                     f"🔗 **Username:** {username}\n"
                                     f"🆔 **User ID:** `{ent.id}`\n"
-                                    f"✨ **Reaksiya Turi:** `{r_type}`\n"
-                                    f"🔑 **Emoji / Doc ID:** `{r_val}`\n"
+                                    f"✨ **Custom Emoji ID:** `{emoji_id}`\n"
                                     f"📊 **Story ID:** `{s.id}`\n"
                                     f"⏰ **Vaqti:** `{time_str}`"
                                 )
@@ -115,26 +108,21 @@ async def commands(event):
     
     if cmd == ".story":
         if len(parts) < 3:
-            await event.edit("❌ **Xato!** Ishlatish tartibi:\n`.story <user_id> <emoji_id_yoki_emoji>`\n\n*Misol uchun:* `.story 123456789 5470341014352136000`")
+            await event.edit("❌ **Xato!** To'g'ri ishlatish:\n`.story <username_yoki_id> <custom_emoji_id>`\n\n*Misol:* `.story @username 5470341014352136000`")
             return
             
         target_arg = parts[1]
-        emoji_arg = parts[2].strip()
+        emoji_id_arg = parts[2].strip()
+        
+        if not emoji_id_arg.isdigit():
+            await event.edit("❌ Xato: Custom Emoji ID faqat raqamlardan iborat bo'lishi kerak!")
+            return
         
         try:
             ent = await client.get_entity(int(target_arg) if target_arg.lstrip('-').isdigit() else target_arg)
             
-            # Agar kiritilgan qiymat raqam bo'lsa - demak bu Premium Custom Emoji ID
-            if emoji_arg.isdigit():
-                react_type = "custom"
-                react_val = emoji_arg
-            else:
-                react_type = "emoji"
-                react_val = emoji_arg
-
             db.setdefault("story_targets", {})[str(ent.id)] = {
-                "type": react_type,
-                "val": react_val,
+                "emoji_id": emoji_id_arg,
                 "name": get_display_name(ent)
             }
             save_data(db)
@@ -142,15 +130,14 @@ async def commands(event):
             await event.edit(
                 f"✅ **Muvaffaqiyatli Qo'shildi!**\n\n"
                 f"👤 **Foydalanuvchi:** {get_display_name(ent)} (`{ent.id}`)\n"
-                f"✨ **Reaksiya Turi:** `{react_type}`\n"
-                f"🔑 **Emoji Qiymati / ID:** `{react_val}`"
+                f"✨ **Custom Emoji ID:** `{emoji_id_arg}`"
             )
         except Exception as e:
             await event.edit(f"❌ Xatolik yuz berdi: {e}")
 
     elif cmd == ".stop":
         if len(parts) < 2:
-            await event.edit("❌ Ishlatish: `.stop <user_id>`")
+            await event.edit("❌ Ishlatish: `.stop <user_id_yoki_username>`")
             return
         target_arg = parts[1]
         try:
@@ -161,7 +148,7 @@ async def commands(event):
                 save_data(db)
                 await event.edit(f"🛑 **Muvaffaqiyatli to'xtatildi:** {get_display_name(ent)} (`{ent.id}`)")
             else:
-                await event.edit("⚠️ Bu ID kuzatuv ro'yxatida topilmadi.")
+                await event.edit("⚠️ Bu foydalanuvchi kuzatuv ro'yxatida topilmadi.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: {e}")
 
@@ -171,12 +158,11 @@ async def commands(event):
             await event.edit("📊 Hozirda kuzatuvda hech kim yo'q.")
             return
             
-        text = f"📊 **Batafsil Kuzatuvdagi Storylar ({len(targets)} ta):**\n\n"
+        text = f"📊 **Kuzatuvdagi Storylar ({len(targets)} ta):**\n\n"
         for uid, info in targets.items():
             name = info.get("name", "Noma'lum")
-            rtype = info.get("type")
-            rval = info.get("val")
-            text += f"👤 **Ism:** {name}\n🆔 **ID:** `{uid}`\n✨ **Reaksiya Turi:** `{rtype}`\n🔑 **Qiymati:** `{rval}`\n-------------------\n"
+            emoji_id = info.get("emoji_id")
+            text += f"👤 **Ism:** {name}\n🆔 **ID:** `{uid}`\n✨ **Emoji ID:** `{emoji_id}`\n-------------------\n"
         await event.edit(text)
 
 async def handle_ping(request):
@@ -193,7 +179,7 @@ async def main():
     await client.start()
     asyncio.create_task(run_web())
     asyncio.create_task(check_stories())
-    print("To'liq va mukammal Story Bot ishga tushdi!")
+    print("Mukammal Custom Emoji Story Bot ishga tushdi!")
 
 with client:
     client.loop.run_until_complete(main())
