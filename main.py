@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import ReactionCustomEmoji, ReactionEmoji
+from telethon.tl.types import ReactionEmoji
 from telethon.tl.functions.stories import (
     GetPeerStoriesRequest, ReadStoriesRequest, SendReactionRequest
 )
@@ -39,8 +39,38 @@ def format_duration(seconds):
     parts.append(f"{seconds} soniya")
     return ", ".join(parts) if parts else "0 soniya"
 
-# Doimiy xotira (Saved Messages ichida saqlash)
-DATA_STORAGE = {"story_targets": {}, "viewed_stories": {}}
+# ==================== [SAQLANGAN TO'LIQ BAZA] ====================
+DEFAULT_BACKUP = {
+    "story_targets": {
+        "7066878581": {"name": "𝗲𝗹𝗻𝘂𝗿"},
+        "72113653": {"name": "️ㅤdovud"},
+        "7888175146": {"name": "Blitz Samarqand"},
+        "1763288488": {"name": "Мирзайев"},
+        "6586461357": {"name": "ㅤㅤㅤш о х р у х ⁷"},
+        "8171643760": {"name": "Xumoyun"},
+        "8328563840": {"name": "Бунёд"},
+        "1684342835": {"name": "N n"},
+        "1472444196": {"name": "Mohinur"},
+        "8747110408": {"name": "сора"},
+        "6235865301": {"name": "ㅤㅤㅤㅤㅤㅤㅤЗ"},
+        "6762269524": {"name": "𝗸𝗵𝗮𝗺𝗿𝗼𝘇"},
+        "6425818276": {"name": "-"},
+        "2117668225": {"name": "Berdiyorov"},
+        "6771229865": {"name": "𝑃𝑎𝑟𝑖𝑧𝑜𝑑𝑎"},
+        "8750101205": {"name": "Бeрдиёров"},
+        "1802315819": {"name": "Farangiz Tuychiyeva"},
+        "8726838128": {"name": "khamroz"}
+    },
+    "viewed_stories": {
+        "7066878581": [234],
+        "8171643760": [143],
+        "8328563840": [55],
+        "1802315819": [413],
+        "8726838128": [1]
+    }
+}
+
+DATA_STORAGE = DEFAULT_BACKUP.copy()
 STORAGE_MSG_ID = None
 
 client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -54,10 +84,10 @@ async def init_storage():
                 DATA_STORAGE = json.loads(raw_json)
                 STORAGE_MSG_ID = msg.id
                 return
-        created_msg = await client.send_message("me", f"#STORY_BOT_BACKUP\n{json.dumps(DATA_STORAGE)}")
+        created_msg = await client.send_message("me", f"#STORY_BOT_BACKUP\n{json.dumps(DATA_STORAGE, ensure_ascii=False)}")
         STORAGE_MSG_ID = created_msg.id
     except Exception as e:
-        print(f"Xotira yuklash xatosi: {e}")
+        print(f"Xotira xatosi: {e}")
 
 async def sync_storage():
     global DATA_STORAGE, STORAGE_MSG_ID
@@ -69,7 +99,7 @@ async def sync_storage():
             msg = await client.send_message("me", content)
             STORAGE_MSG_ID = msg.id
     except Exception as e:
-        print(f"Xotira saqlash xatosi: {e}")
+        print(f"Sync xatosi: {e}")
 
 async def notify_log_channel(text):
     try:
@@ -77,77 +107,61 @@ async def notify_log_channel(text):
     except Exception as e:
         print(f"Log kanal xatosi: {e}")
 
-# ==================== [STORY MONITORING (RASM VA VIDEO)] ====================
+# ==================== [ULTRA TEZKOR STANDART STORY MONITORING] ====================
+async def process_single_target(uid_str, info):
+    try:
+        uid = int(uid_str) if uid_str.lstrip('-').isdigit() else uid_str
+        peer_entity = await client.get_input_entity(uid)
+        entity_full = await client.get_entity(uid)
+        stories_result = await client(GetPeerStoriesRequest(peer=peer_entity))
+        
+        if hasattr(stories_result, 'stories') and stories_result.stories:
+            for story_item in stories_result.stories.stories:
+                sid = getattr(story_item, 'id', None)
+                if not sid:
+                    continue
+
+                viewed_list = DATA_STORAGE.setdefault("viewed_stories", {}).setdefault(str(entity_full.id), [])
+                
+                if sid not in viewed_list:
+                    # Millisekund ichida ko'riladi va standart ❤️ bosiladi
+                    await client(ReadStoriesRequest(peer=peer_entity, max_id=sid))
+                    await client(SendReactionRequest(
+                        peer=peer_entity,
+                        story_id=sid,
+                        reaction=ReactionEmoji(emoticon='❤️')
+                    ))
+                    
+                    viewed_list.append(sid)
+                    await sync_storage()
+                    
+                    user_display = get_display_name(entity_full)
+                    user_handle = f"@{entity_full.username}" if getattr(entity_full, 'username', None) else "Mavjud emas"
+                    action_time = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
+                    
+                    log_entry = (
+                        f"⚡️ **Yangi Storyga Tezkor Like Bosildi!**\n\n"
+                        f"👤 **Foydalanuvchi:** {user_display}\n"
+                        f"🔗 **Username:** {user_handle}\n"
+                        f"🆔 **ID:** `{entity_full.id}`\n"
+                        f"❤️ **Reaksiya:** Standart Like\n"
+                        f"📊 **Story ID:** `{sid}`\n"
+                        f"⏰ **Vaqti:** `{action_time}`"
+                    )
+                    await notify_log_channel(log_entry)
+    except Exception:
+        pass
+
 async def story_monitoring_loop():
     while True:
         try:
             targets = list(DATA_STORAGE.get("story_targets", {}).items())
             for uid_str, info in targets:
-                try:
-                    uid = int(uid_str) if uid_str.lstrip('-').isdigit() else uid_str
-                    peer_entity = await client.get_input_entity(uid)
-                    entity_full = await client.get_entity(uid)
-                    stories_result = await client(GetPeerStoriesRequest(peer=peer_entity))
-                    
-                    if hasattr(stories_result, 'stories') and stories_result.stories:
-                        for story_item in stories_result.stories.stories:
-                            sid = getattr(story_item, 'id', None)
-                            if not sid:
-                                continue
-
-                            viewed_list = DATA_STORAGE.setdefault("viewed_stories", {}).setdefault(str(entity_full.id), [])
-                            
-                            if sid not in viewed_list:
-                                try:
-                                    await client(ReadStoriesRequest(peer=peer_entity, max_id=sid))
-                                except Exception:
-                                    pass
-                                
-                                emoji_id = str(info.get("emoji_id"))
-                                reaction_obj = [ReactionCustomEmoji(document_id=int(emoji_id))]
-                                
-                                reacted = False
-                                try:
-                                    await client(SendReactionRequest(
-                                        peer=peer_entity,
-                                        story_id=sid,
-                                        reaction=reaction_obj
-                                    ))
-                                    reacted = True
-                                except Exception:
-                                    try:
-                                        await client(SendReactionRequest(
-                                            peer=peer_entity,
-                                            story_id=sid,
-                                            reaction=[ReactionEmoji(emoticon='❤️')]
-                                        ))
-                                        reacted = True
-                                    except Exception:
-                                        pass
-
-                                viewed_list.append(sid)
-                                await sync_storage()
-                                
-                                user_display = get_display_name(entity_full)
-                                user_handle = f"@{entity_full.username}" if getattr(entity_full, 'username', None) else "Mavjud emas"
-                                action_time = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
-                                
-                                log_entry = (
-                                    f"🔥 **Storyga Reaksiya Bosildi!**\n\n"
-                                    f"👤 **Foydalanuvchi:** {user_display}\n"
-                                    f"🔗 **Username:** {user_handle}\n"
-                                    f"🆔 **ID:** `{entity_full.id}`\n"
-                                    f"✨ **Custom Emoji ID:** `{emoji_id}`\n"
-                                    f"📊 **Story ID:** `{sid}`\n"
-                                    f"⏰ **Vaqti:** `{action_time}`"
-                                )
-                                await notify_log_channel(log_entry)
-                except Exception:
-                    pass
-                await asyncio.sleep(2)
+                asyncio.create_task(process_single_target(uid_str, info))
+                await asyncio.sleep(0.3)
         except Exception:
             pass
-        await asyncio.sleep(10)
+        await asyncio.sleep(5)
 
 # ==================== [24/7 ONLINE] ====================
 async def always_online_loop():
@@ -173,7 +187,7 @@ async def global_incoming_message_handler(event):
         except Exception:
             pass
 
-# ==================== [BUYRUQLAR] ====================
+# ==================== [BUYRUQLAR BOSHQARUVI] ====================
 @client.on(events.NewMessage(outgoing=True))
 async def master_commands_router(event):
     global DATA_STORAGE, ONLINE_CHAT_ID, ONLINE_START_TIME, ONLINE_TASK, AUTO_READ_ENABLED
@@ -189,17 +203,11 @@ async def master_commands_router(event):
         await event.edit("🏓 **Pong! Bot to'liq faol ishlayapti.**")
 
     elif command == ".story":
-        if len(tokens) < 3:
-            await event.edit("❌ **Ishlatish:** `.story <id/@username> <emoji_id>`")
+        if len(tokens) < 2:
+            await event.edit("❌ **Ishlatish:** `.story <id/@username>`\n*Ortiqcha emoji yoki raqam kiritish shart emas.*")
             return
         
         target_param = tokens[1]
-        emoji_id_param = tokens[2]
-        
-        if not emoji_id_param.isdigit():
-            await event.edit("❌ **Xato:** Custom Emoji ID faqat raqamlardan iborat bo'lishi kerak!")
-            return
-
         try:
             target_identity = int(target_param) if target_param.lstrip('-').isdigit() else target_param
             entity_obj = await client.get_entity(target_identity)
@@ -208,19 +216,18 @@ async def master_commands_router(event):
                 DATA_STORAGE["viewed_stories"][str(entity_obj.id)] = []
 
             DATA_STORAGE.setdefault("story_targets", {})[str(entity_obj.id)] = {
-                "emoji_id": emoji_id_param,
                 "name": get_display_name(entity_obj)
             }
             await sync_storage()
             
             await event.edit(
-                f"✅ **Kuzatuvga olindi!**\n\n"
+                f"✅ **Tezkor kuzatuvga olindi!**\n\n"
                 f"👤 {get_display_name(entity_obj)} (`{entity_obj.id}`)\n"
-                f"✨ **Custom Emoji ID:** `{emoji_id_param}`\n"
-                f"⚡️ *Server qayta yonsa ham o'chib ketmaydigan bulutli xotiraga saqlandi.*"
+                f"❤️ Reaksiya: Standart Like\n"
+                f"⚡️ *Story joylanishi bilanoq tezkor ko'rib, like bosiladi.*"
             )
         except Exception as e:
-            await event.edit(f"❌ Xatolik yuz berdi: {e}")
+            await event.edit(f"❌ Xatolik: {e}")
 
     elif command == ".stop":
         if len(tokens) < 2:
@@ -236,7 +243,7 @@ async def master_commands_router(event):
                 await sync_storage()
                 await event.edit(f"🛑 **Kuzatuv to'xtatildi:** {get_display_name(entity_obj)} (`{entity_obj.id}`)")
             else:
-                await event.edit("⚠️ Bu foydalanuvchi kuzatuv ro'yxatida topilmadi.")
+                await event.edit("⚠️ Bu foydalanuvchi topilmadi.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: {e}")
 
@@ -249,8 +256,7 @@ async def master_commands_router(event):
         summary_text = f"📊 **Kuzatuvdagi Storylar ({len(active_targets)} ta):**\n\n"
         for uid_key, target_data in active_targets.items():
             user_title = target_data.get("name", "Noma'lum")
-            custom_emoji_ref = target_data.get("emoji_id")
-            summary_text += f"👤 **Ism:** {user_title}\n🆔 **ID:** `{uid_key}`\n✨ **Emoji ID:** `{custom_emoji_ref}`\n-------------------\n"
+            summary_text += f"👤 **Ism:** {user_title}\n🆔 **ID:** `{uid_key}`\n❤️ **Reaksiya:** Standart Like\n-------------------\n"
         await event.edit(summary_text)
 
     elif command == ".on":
@@ -260,7 +266,7 @@ async def master_commands_router(event):
         if ONLINE_TASK is None or ONLINE_TASK.done():
             ONLINE_TASK = asyncio.create_task(always_online_loop())
             
-        await event.edit("🟢 **24/7 Online rejimi yoqildi!**\n📍 Har 30 soniyada ushbu chat orqali online signali yuboriladi.")
+        await event.edit("🟢 **24/7 Online rejimi yoqildi!**\n📍 Har 30 soniyada ushbu chat orqali online signali yangilanadi.")
 
     elif command == ".off":
         if ONLINE_TASK and not ONLINE_TASK.done():
@@ -297,7 +303,7 @@ async def master_commands_router(event):
             f"📸 **Kuzatuvdagi Storylar:** {stories_count} ta"
         )
 
-# ==================== [SERVER VA RUNNER] ====================
+# ==================== [WEB SERVER] ====================
 async def handle_ping_web(request):
     return web.Response(text="Bot is running smoothly")
 
@@ -312,7 +318,7 @@ async def main():
     await web.TCPSite(server_runner, '0.0.0.0', PORT).start()
     
     asyncio.create_task(story_monitoring_loop())
-    print("Bot xotira sinxronizatsiyasi bilan ishga tushdi!")
+    print("Ultra tezkor Story bot ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
