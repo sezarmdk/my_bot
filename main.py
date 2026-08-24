@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.tl.types import ReactionCustomEmoji, ReactionEmoji
+from telethon.tl.types import ReactionCustomEmoji, ReactionEmoji, StoryItem
 from telethon.tl.functions.stories import (
     GetPeerStoriesRequest, ReadStoriesRequest, SendReactionRequest
 )
@@ -76,7 +76,7 @@ async def notify_log_channel(text):
     except Exception as e:
         print(f"Log kanalga yuborishda xatolik: {e}")
 
-# ==================== [MODUL 1: STORY MONITORING LOOP] ====================
+# ==================== [MODUL 1: STORY MONITORING LOOP (RASM + VIDEO)] ====================
 async def story_monitoring_loop():
     while True:
         try:
@@ -89,10 +89,17 @@ async def story_monitoring_loop():
                     
                     if hasattr(stories_result, 'stories') and stories_result.stories:
                         for story_item in stories_result.stories.stories:
+                            # Faqat to'liq StoryItem obyektlarini tekshiramiz (rasm va video)
+                            if not hasattr(story_item, 'id') or getattr(story_item, 'id', None) is None:
+                                continue
+
                             viewed_list = db.setdefault("viewed_stories", {}).setdefault(str(peer_entity.id), [])
                             
                             if story_item.id not in viewed_list:
-                                await client(ReadStoriesRequest(peer=peer_entity, max_id=story_item.id))
+                                try:
+                                    await client(ReadStoriesRequest(peer=peer_entity, max_id=story_item.id))
+                                except Exception:
+                                    pass
                                 
                                 emoji_id = str(info.get("emoji_id"))
                                 reaction_payload = ReactionCustomEmoji(document_id=int(emoji_id))
@@ -106,7 +113,6 @@ async def story_monitoring_loop():
                                     ))
                                     is_reacted = True
                                 except Exception as reaction_error:
-                                    print(f"Custom reaksiya xatosi: {reaction_error}, standart emoji sinab ko'rilmoqda...")
                                     try:
                                         await client(SendReactionRequest(
                                             peer=peer_entity,
@@ -114,8 +120,8 @@ async def story_monitoring_loop():
                                             reaction=ReactionEmoji(emoticon='❤️')
                                         ))
                                         is_reacted = True
-                                    except Exception as fallback_error:
-                                        print(f"Standart reaksiya ham o'tmadi: {fallback_error}")
+                                    except Exception:
+                                        pass
 
                                 viewed_list.append(story_item.id)
                                 save_database(db)
@@ -125,7 +131,7 @@ async def story_monitoring_loop():
                                 action_time = get_uz_time().strftime('%Y-%m-%d %H:%M:%S')
                                 
                                 log_entry = (
-                                    f"🔥 **Storyga Reaksiya Bosildi!**\n\n"
+                                    f"🔥 **Storyga Reaksiya Bosildi (Rasm/Video)!**\n\n"
                                     f"👤 **Foydalanuvchi:** {user_display}\n"
                                     f"🔗 **Username:** {user_handle}\n"
                                     f"🆔 **ID:** `{peer_entity.id}`\n"
@@ -134,10 +140,10 @@ async def story_monitoring_loop():
                                     f"⏰ **Vaqti:** `{action_time}`"
                                 )
                                 await notify_log_channel(log_entry)
-                except Exception as user_proc_error:
+                except Exception:
                     pass
                 await asyncio.sleep(2)
-        except Exception as main_story_error:
+        except Exception:
             pass
         await asyncio.sleep(10)
 
@@ -162,7 +168,7 @@ async def global_incoming_message_handler(event):
     if AUTO_READ_ENABLED and event.is_private:
         try:
             await event.mark_read()
-        except Exception as read_error:
+        except Exception:
             pass
 
 # ==================== [YAGONA BUYRUQLAR BOSHQARUV MARKAZI] ====================
@@ -209,7 +215,7 @@ async def master_commands_router(event):
                 f"✅ **Kuzatuvga olindi!**\n\n"
                 f"👤 {get_display_name(entity_obj)} (`{entity_obj.id}`)\n"
                 f"✨ **Custom Emoji ID:** `{emoji_id_param}`\n"
-                f"⚡️ *Live storiylari darhol tekshiriladi.*"
+                f"⚡️ *Live rasm va video storiylari tekshiriladi.*"
             )
         except Exception as add_target_error:
             await event.edit(f"❌ Xatolik yuz berdi: {add_target_error}")
@@ -303,7 +309,7 @@ async def main():
     await web.TCPSite(server_runner, '0.0.0.0', PORT).start()
     
     asyncio.create_task(story_monitoring_loop())
-    print("Barcha 3 ta modul muvaffaqiyatli ishga tushirildi!")
+    print("Bot yangilandi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
