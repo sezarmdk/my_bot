@@ -33,8 +33,10 @@ ONLINE_CHAT_ID = None
 ONLINE_TASK = None
 AUTO_READ_ENABLED = False
 
+# Auto-Status o'zgaruvchilari
 AUTO_STATUS_TASK = None
 AUTO_STATUS_RUNNING = False
+STATUS_INTERVAL = 1.0  # Xavfsiz maksimal tezlik: 1 soniya
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -121,6 +123,7 @@ async def notify_log_channel(text):
     except Exception as e:
         print(f"Log kanal xatosi: {e}")
 
+# ==================== [STORY MONITORING & AUTO LIKE] ====================
 async def process_single_target(uid_str, info):
     try:
         uid = int(uid_str) if uid_str.lstrip("-").isdigit() else uid_str
@@ -159,7 +162,7 @@ async def process_single_target(uid_str, info):
                         f"🆔 **Story ID:** `{sid}`\n"
                         f"🕒 **Vaqt:** {now_str}"
                     )
-                    await asyncio.sleep(random.uniform(1.0, 2.5))
+                    await asyncio.sleep(random.uniform(1.0, 2.0))
 
             if new_sids:
                 max_sid = max(new_sids)
@@ -175,11 +178,12 @@ async def story_monitoring_loop():
             targets = DATA_STORAGE.get("story_targets", {})
             for uid_str, info in list(targets.items()):
                 await process_single_target(uid_str, info)
-                await asyncio.sleep(1.5)
+                await asyncio.sleep(1.0)
         except Exception as e:
             print(f"Monitoring sikli xatosi: {e}")
-        await asyncio.sleep(20)
+        await asyncio.sleep(15)
 
+# ==================== [AUTO STATUS DVIJOKI (1 SONIYA)] ====================
 async def auto_status_rotator(emoji_ids, is_random=False):
     global AUTO_STATUS_RUNNING
     idx = 0
@@ -196,8 +200,9 @@ async def auto_status_rotator(emoji_ids, is_random=False):
             ))
         except Exception as e:
             print(f"Status almashtirishda xato: {e}")
-        await asyncio.sleep(2)
+        await asyncio.sleep(STATUS_INTERVAL)
 
+# ==================== [BUYRUQLAR ROUTER] ====================
 @client.on(events.NewMessage(outgoing=True))
 async def handle_userbot_commands(event):
     global ONLINE_START_TIME, ONLINE_CHAT_ID, ONLINE_TASK, AUTO_READ_ENABLED
@@ -210,7 +215,52 @@ async def handle_userbot_commands(event):
     parts = text.split()
     command = parts[0].lower()
 
-    if command == ".status":
+    # 1. .story <id/username> (Kuzatuvga qo'shish)
+    if command == ".story":
+        if len(parts) < 2:
+            await event.edit("❌ **Ishlatish:** `.story <id/@username>`\nMisol: `.story 12345678` yoki `.story @durov`")
+            return
+        
+        target = parts[1]
+        try:
+            target_peer = int(target) if target.lstrip("-").isdigit() else target
+            entity = await client.get_entity(target_peer)
+            user_id_str = str(entity.id)
+            user_name = get_display_name(entity) or "Target"
+            
+            targets = DATA_STORAGE.setdefault("story_targets", {})
+            targets[user_id_str] = {"name": user_name}
+            await sync_storage()
+            
+            await event.edit(f"✅ **Kuzatuvga qo'shildi:**\n👤 `{user_name}` (`{user_id_str}`)\nStory chiqarsa darhol ko'rib, layk bosadi.")
+        except Exception as e:
+            await event.edit(f"❌ Foydalanuvchi topilmadi yoki xatolik: `{e}`")
+
+    # 2. .stop <id/username> (Kuzatuvdan o'chirish)
+    elif command == ".stop":
+        if len(parts) < 2:
+            await event.edit("❌ **Ishlatish:** `.stop <id/@username>`\nMisol: `.stop 12345678`")
+            return
+        
+        target = parts[1]
+        try:
+            target_peer = int(target) if target.lstrip("-").isdigit() else target
+            entity = await client.get_entity(target_peer)
+            user_id_str = str(entity.id)
+            user_name = get_display_name(entity) or "Target"
+            
+            targets = DATA_STORAGE.get("story_targets", {})
+            if user_id_str in targets:
+                del targets[user_id_str]
+                await sync_storage()
+                await event.edit(f"🗑 **Kuzatuvdan olib tashlandi:**\n👤 `{user_name}` (`{user_id_str}`)")
+            else:
+                await event.edit(f"⚠️ `{user_name}` kuzatuv ro'yxatida mavjud emas.")
+        except Exception as e:
+            await event.edit(f"❌ Xatolik: `{e}`")
+
+    # 3. .status <emojilar> (RANDOM almashtirish - 1 soniya)
+    elif command == ".status":
         custom_emoji_ids = []
         if event.entities:
             for entity in event.entities:
@@ -218,7 +268,7 @@ async def handle_userbot_commands(event):
                     custom_emoji_ids.append(entity.document_id)
 
         if not custom_emoji_ids:
-            auto_stat_desc = "🟢 Faol (2s Random)" if AUTO_STATUS_RUNNING else "🔴 O'chiq"
+            auto_stat_desc = "🟢 Faol (1s Random)" if AUTO_STATUS_RUNNING else "🔴 O'chiq"
             await event.edit(
                 f"ℹ️ **Random Auto-Status yoqish:** `.status ⚡️ 🔥 👑`\n"
                 f"🎭 **Holati:** {auto_stat_desc}\n"
@@ -232,8 +282,9 @@ async def handle_userbot_commands(event):
 
         AUTO_STATUS_RUNNING = True
         AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(custom_emoji_ids, is_random=True))
-        await event.edit(f"🎲 **Random Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta emoji har 2 soniyada tasodifiy almashadi.")
+        await event.edit(f"🎲 **Random Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta emoji har 1 soniyada tasodifiy almashadi.")
 
+    # 4. .emoji <emojilar> (TARTIB BILAN almashtirish - 1 soniya)
     elif command == ".emoji":
         custom_emoji_ids = []
         if event.entities:
@@ -242,7 +293,7 @@ async def handle_userbot_commands(event):
                     custom_emoji_ids.append(entity.document_id)
 
         if not custom_emoji_ids:
-            await event.edit("❌ **Ishlatish:** `.emoji 🅰️ 🅱️ ©️`\n*(Harflar/emojilarni tartib bilan yozing, ketma-ket almashadi)*")
+            await event.edit("❌ **Ishlatish:** `.emoji 🅰️ 🅱️ ©️`\n*(Harflarni tartib bilan yozing, ketma-ket har 1 soniyada almashadi)*")
             return
 
         if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
@@ -251,8 +302,9 @@ async def handle_userbot_commands(event):
 
         AUTO_STATUS_RUNNING = True
         AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(custom_emoji_ids, is_random=False))
-        await event.edit(f"🔤 **Ketma-ket Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta emoji har 2 soniyada navbatma-navbat almashadi.")
+        await event.edit(f"🔤 **Ketma-ket Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta emoji har 1 soniyada navbatma-navbat almashadi.")
 
+    # 5. .unstatus (Statusni to'xtatish va tozalash)
     elif command in [".unstatus", ".unstat"]:
         if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
             AUTO_STATUS_RUNNING = False
@@ -264,6 +316,7 @@ async def handle_userbot_commands(event):
         except Exception as e:
             await event.edit(f"❌ Xatolik: `{e}`")
 
+    # 6. .online
     elif command == ".online":
         if not ONLINE_TASK or ONLINE_TASK.done():
             ONLINE_START_TIME = time.time()
@@ -282,6 +335,7 @@ async def handle_userbot_commands(event):
         else:
             await event.edit("ℹ️ Online rejimi allaqachon ishlab turibdi.")
 
+    # 7. .offline
     elif command == ".offline":
         if ONLINE_TASK and not ONLINE_TASK.done():
             ONLINE_TASK.cancel()
@@ -291,14 +345,17 @@ async def handle_userbot_commands(event):
         else:
             await event.edit("ℹ️ Online rejimi faol emas edi.")
 
+    # 8. .autoread
     elif command == ".autoread":
         AUTO_READ_ENABLED = True
         await event.edit("👁 **Auto-Read rejimi yoqildi.**")
 
+    # 9. .unread
     elif command == ".unread":
         AUTO_READ_ENABLED = False
         await event.edit("🙈 **Auto-Read rejimi to'xtatildi.**")
 
+    # 10. .info
     elif command == ".info":
         system_uptime = format_duration(time.time() - BOT_START_TIME)
 
@@ -309,7 +366,7 @@ async def handle_userbot_commands(event):
             online_status_desc = "🔴 **O'chiq**"
 
         auto_read_status_desc = "🟢 **Yoqilgan**" if AUTO_READ_ENABLED else "🔴 **O'chirilgan**"
-        auto_stat_desc = "🟢 **Faol (2s)**" if AUTO_STATUS_RUNNING else "🔴 **O'chiq**"
+        auto_stat_desc = "🟢 **Faol (1s)**" if AUTO_STATUS_RUNNING else "🔴 **O'chiq**"
         stories_count = len(DATA_STORAGE.get('story_targets', {}))
 
         await event.edit(
