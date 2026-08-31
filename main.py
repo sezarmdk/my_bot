@@ -7,6 +7,7 @@ from datetime import datetime, timezone, timedelta
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
+from telethon.errors import FloodWaitError
 from telethon.tl.types import (
     ReactionEmoji,
     EmojiStatus,
@@ -33,10 +34,10 @@ ONLINE_CHAT_ID = None
 ONLINE_TASK = None
 AUTO_READ_ENABLED = False
 
-# Auto-Status o'zgaruvchilari
+# Auto-Status sozlamalari
 AUTO_STATUS_TASK = None
 AUTO_STATUS_RUNNING = False
-STATUS_INTERVAL = 1.0  # 1 soniya tezlik
+STATUS_INTERVAL = 1.8  # 1.8 soniya oraliq
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -183,7 +184,7 @@ async def story_monitoring_loop():
             print(f"Monitoring sikli xatosi: {e}")
         await asyncio.sleep(15)
 
-# ==================== [AUTO STATUS DVIJOKI (1.0 SONIYA)] ====================
+# ==================== [AUTO STATUS DVIJOKI (1.8s)] ====================
 async def auto_status_rotator(emoji_ids, is_random=False):
     global AUTO_STATUS_RUNNING
     idx = 0
@@ -199,9 +200,14 @@ async def auto_status_rotator(emoji_ids, is_random=False):
             await client(UpdateEmojiStatusRequest(
                 emoji_status=EmojiStatus(document_id=doc_id_int)
             ))
+            await asyncio.sleep(STATUS_INTERVAL)
+
+        except FloodWaitError as fe:
+            print(f"FloodWait: {fe.seconds}s kutilmoqda...")
+            await asyncio.sleep(fe.seconds + 1)
         except Exception as e:
-            print(f"Status almashtirishda xatolik: {e}")
-        await asyncio.sleep(STATUS_INTERVAL)
+            print(f"Status xatosi: {e}")
+            await asyncio.sleep(STATUS_INTERVAL)
 
 # ==================== [BUYRUQLAR ROUTER] ====================
 @client.on(events.NewMessage(outgoing=True))
@@ -260,7 +266,7 @@ async def handle_userbot_commands(event):
         except Exception as e:
             await event.edit(f"❌ Xatolik: `{e}`")
 
-    # 3. .status <emojilar> (RANDOM - 1s)
+    # 3. .status <emojilar> (RANDOM - 1.8s)
     elif command == ".status":
         custom_emoji_ids = []
         if event.entities:
@@ -269,10 +275,10 @@ async def handle_userbot_commands(event):
                     custom_emoji_ids.append(int(entity.document_id))
 
         if not custom_emoji_ids:
-            auto_stat_desc = "🟢 Faol (1s Random)" if AUTO_STATUS_RUNNING else "🔴 O'chiq"
+            auto_stat_desc = f"🟢 Faol ({STATUS_INTERVAL}s Random)" if AUTO_STATUS_RUNNING else "🔴 O'chiq"
             await event.edit(
                 f"ℹ️ **Random Auto-Status yoqish:** `.status ⚡️ 🔥 👑`\n"
-                f"*(Faqat Telegram Premium maxsus emojilari ishlaydi)*\n"
+                f"*(Telegram Premium maxsus emojilari bilan)*\n"
                 f"🎭 **Holati:** {auto_stat_desc}\n"
                 f"🗑 **O'chirish:** `.unstatus`"
             )
@@ -284,9 +290,9 @@ async def handle_userbot_commands(event):
 
         AUTO_STATUS_RUNNING = True
         AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(custom_emoji_ids, is_random=True))
-        await event.edit(f"🎲 **Random Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta Premium emoji har {STATUS_INTERVAL} soniyada almashadi.")
+        await event.edit(f"🎲 **Random Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta Premium emoji har {STATUS_INTERVAL}s da tasodifiy almashadi.")
 
-    # 4. .emoji <emojilar> (KETMA-KET - 1s)
+    # 4. .emoji <emojilar> (KETMA-KET - 1.8s)
     elif command == ".emoji":
         custom_emoji_ids = []
         if event.entities:
@@ -295,7 +301,7 @@ async def handle_userbot_commands(event):
                     custom_emoji_ids.append(int(entity.document_id))
 
         if not custom_emoji_ids:
-            await event.edit("❌ **Xatolik:** Faqat **Telegram Premium** maxsus stiker/emojilaridan foydalaning! Oddiy klaviatura emojilari profil statusiga qo'yilmaydi.")
+            await event.edit("❌ **Xatolik:** Faqat **Telegram Premium** maxsus stiker/emojilaridan foydalaning!")
             return
 
         if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
@@ -304,7 +310,7 @@ async def handle_userbot_commands(event):
 
         AUTO_STATUS_RUNNING = True
         AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(custom_emoji_ids, is_random=False))
-        await event.edit(f"🔤 **Ketma-ket Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta Premium emoji har {STATUS_INTERVAL} soniyada navbatma-navbat almashadi.")
+        await event.edit(f"🔤 **Ketma-ket Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta Premium emoji har {STATUS_INTERVAL}s da navbatma-navbat almashadi.")
 
     # 5. .unstatus (TO'XTATISH VA TOZALASH)
     elif command in [".unstatus", ".unstat"]:
