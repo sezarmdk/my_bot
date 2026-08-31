@@ -3,11 +3,18 @@ import json
 import os
 import random
 import time
+import logging
 from datetime import datetime, timezone, timedelta
 from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.errors import FloodWaitError
+from telethon.errors import (
+    FloodWaitError,
+    UserNotMutualContactError,
+    PeerIdInvalidError,
+    UsernameNotOccupiedError,
+    UsernameInvalidError
+)
 from telethon.tl.types import (
     ReactionEmoji,
     EmojiStatus,
@@ -21,6 +28,8 @@ from telethon.tl.functions.stories import (
     SendReactionRequest
 )
 from telethon.utils import get_display_name
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
 API_ID = int(os.environ.get("API_ID", 32261789))
 API_HASH = os.environ.get("API_HASH", "06254a37741c127fd669909f57e67168")
@@ -37,7 +46,7 @@ AUTO_READ_ENABLED = False
 # Auto-Status sozlamalari
 AUTO_STATUS_TASK = None
 AUTO_STATUS_RUNNING = False
-STATUS_INTERVAL = 2.0  # Aniq 2 soniya oraliq
+STATUS_INTERVAL = 3.0  # Barqaror 3.0 soniya
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -100,11 +109,13 @@ async def init_storage():
                 raw_json = msg.raw_text.replace("#STORY_BOT_BACKUP\n", "")
                 DATA_STORAGE = json.loads(raw_json)
                 STORAGE_MSG_ID = msg.id
+                logging.info("Baza Saved Messagesdan muvaffaqiyatli yuklandi.")
                 return
         created_msg = await client.send_message("me", f"#STORY_BOT_BACKUP\n{json.dumps(DATA_STORAGE, ensure_ascii=False)}")
         STORAGE_MSG_ID = created_msg.id
+        logging.info("Baza Saved Messagesda yangidan yaratildi.")
     except Exception as e:
-        print(f"Xotira xatosi: {e}")
+        logging.error(f"Xotira xatosi: {e}")
 
 async def sync_storage():
     global DATA_STORAGE, STORAGE_MSG_ID
@@ -116,15 +127,15 @@ async def sync_storage():
             msg = await client.send_message("me", content)
             STORAGE_MSG_ID = msg.id
     except Exception as e:
-        print(f"Sync xatosi: {e}")
+        logging.error(f"Sync xatosi: {e}")
 
 async def notify_log_channel(text):
     try:
         await client.send_message(LOG_CHANNEL_ID, text)
     except Exception as e:
-        print(f"Log kanal xatosi: {e}")
+        logging.error(f"Log kanal xatosi: {e}")
 
-# ==================== [STORY MONITORING] ====================
+# ==================== [STORY MONITORING & AUTO LIKE] ====================
 async def process_single_target(uid_str, info):
     try:
         uid = int(uid_str) if uid_str.lstrip("-").isdigit() else uid_str
@@ -153,7 +164,7 @@ async def process_single_target(uid_str, info):
                             reaction=[ReactionEmoji(emoticon="❤️")]
                         ))
                     except Exception as like_err:
-                        print(f"Layk xatosi ({uid_str} -> {sid}): {like_err}")
+                        logging.warning(f"Layk xatosi ({uid_str} -> {sid}): {like_err}")
 
                     user_title = get_display_name(entity_full) or info.get("name", "Noma'lum")
                     now_str = get_uz_time().strftime("%H:%M:%S")
@@ -163,7 +174,7 @@ async def process_single_target(uid_str, info):
                         f"🆔 **Story ID:** `{sid}`\n"
                         f"🕒 **Vaqt:** {now_str}"
                     )
-                    await asyncio.sleep(random.uniform(1.0, 2.0))
+                    await asyncio.sleep(random.uniform(1.2, 2.5))
 
             if new_sids:
                 max_sid = max(new_sids)
@@ -179,12 +190,12 @@ async def story_monitoring_loop():
             targets = DATA_STORAGE.get("story_targets", {})
             for uid_str, info in list(targets.items()):
                 await process_single_target(uid_str, info)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(1.2)
         except Exception as e:
-            print(f"Monitoring sikli xatosi: {e}")
+            logging.error(f"Monitoring sikli xatosi: {e}")
         await asyncio.sleep(15)
 
-# ==================== [AUTO STATUS DVIJOKI (2.0s)] ====================
+# ==================== [AUTO STATUS DVIJOKI (3.0s)] ====================
 async def auto_status_rotator(emoji_ids, is_random=False):
     global AUTO_STATUS_RUNNING
     idx = 0
@@ -203,10 +214,10 @@ async def auto_status_rotator(emoji_ids, is_random=False):
             await asyncio.sleep(STATUS_INTERVAL)
 
         except FloodWaitError as fe:
-            print(f"FloodWait: {fe.seconds}s kutilmoqda...")
-            await asyncio.sleep(fe.seconds + 1)
+            logging.warning(f"FloodWait: {fe.seconds}s kutilmoqda...")
+            await asyncio.sleep(fe.seconds + 2)
         except Exception as e:
-            print(f"Status xatosi: {e}")
+            logging.error(f"Status xatosi: {e}")
             await asyncio.sleep(STATUS_INTERVAL)
 
 # ==================== [BUYRUQLAR ROUTER] ====================
@@ -225,7 +236,7 @@ async def handle_userbot_commands(event):
     # 1. .story <id/username>
     if command == ".story":
         if len(parts) < 2:
-            await event.edit("❌ **Ishlatish:** `.story <id/@username>`\nMisol: `.story 12345678`")
+            await event.edit("❌ **Ishlatish:** `.story <id/@username>`\nMisol: `.story 12345678` yoki `.story @durov`")
             return
         
         target = parts[1]
@@ -239,9 +250,9 @@ async def handle_userbot_commands(event):
             targets[user_id_str] = {"name": user_name}
             await sync_storage()
             
-            await event.edit(f"✅ **Kuzatuvga qo'shildi:**\n👤 `{user_name}` (`{user_id_str}`)")
+            await event.edit(f"✅ **Kuzatuvga muvaffaqiyatli qo'shildi:**\n👤 `{user_name}` (`{user_id_str}`)\nStory chiqarsa darhol ko'rib, ❤️ layk bosadi.")
         except Exception as e:
-            await event.edit(f"❌ Foydalanuvchi topilmadi: `{e}`")
+            await event.edit(f"❌ Foydalanuvchi topilmadi yoki xatolik: `{e}`")
 
     # 2. .stop <id/username>
     elif command == ".stop":
@@ -262,11 +273,11 @@ async def handle_userbot_commands(event):
                 await sync_storage()
                 await event.edit(f"🗑 **Kuzatuvdan olib tashlandi:**\n👤 `{user_name}` (`{user_id_str}`)")
             else:
-                await event.edit(f"⚠️ `{user_name}` kuzatuvda mavjud emas.")
+                await event.edit(f"⚠️ `{user_name}` kuzatuv ro'yxatida topilmadi.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: `{e}`")
 
-    # 3. .status <emojilar> (RANDOM - 2.0s)
+    # 3. .status <emojilar> (RANDOM - 3.0s)
     elif command == ".status":
         custom_emoji_ids = []
         if event.entities:
@@ -278,7 +289,7 @@ async def handle_userbot_commands(event):
             auto_stat_desc = f"🟢 Faol ({STATUS_INTERVAL}s Random)" if AUTO_STATUS_RUNNING else "🔴 O'chiq"
             await event.edit(
                 f"ℹ️ **Random Auto-Status yoqish:** `.status ⚡️ 🔥 👑`\n"
-                f"*(Telegram Premium maxsus emojilari bilan)*\n"
+                f"*(Faqat Telegram Premium maxsus emojilari ishlaydi)*\n"
                 f"🎭 **Holati:** {auto_stat_desc}\n"
                 f"🗑 **O'chirish:** `.unstatus`"
             )
@@ -292,7 +303,7 @@ async def handle_userbot_commands(event):
         AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(custom_emoji_ids, is_random=True))
         await event.edit(f"🎲 **Random Auto-Status yoqildi!** `{len(custom_emoji_ids)}` ta Premium emoji har {STATUS_INTERVAL}s da tasodifiy almashadi.")
 
-    # 4. .emoji <emojilar> (KETMA-KET - 2.0s)
+    # 4. .emoji <emojilar> (KETMA-KET - 3.0s)
     elif command == ".emoji":
         custom_emoji_ids = []
         if event.entities:
@@ -301,7 +312,7 @@ async def handle_userbot_commands(event):
                     custom_emoji_ids.append(int(entity.document_id))
 
         if not custom_emoji_ids:
-            await event.edit("❌ **Xatolik:** Faqat **Telegram Premium** maxsus stiker/emojilaridan foydalaning!")
+            await event.edit("❌ **Xatolik:** Faqat **Telegram Premium** maxsus stiker/emojilaridan foydalaning!\nMisol: `.emoji 🅰️ 🅱️ ©️`")
             return
 
         if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
@@ -395,7 +406,7 @@ async def auto_read_incoming(event):
             pass
 
 async def handle_ping_web(request):
-    return web.Response(text="Bot is running smoothly")
+    return web.Response(text="Bot is running smoothly 24/7")
 
 async def main():
     await client.start()
@@ -408,7 +419,7 @@ async def main():
     await web.TCPSite(server_runner, '0.0.0.0', PORT).start()
 
     asyncio.create_task(story_monitoring_loop())
-    print("Ultra tezkor Story bot ishga tushdi!")
+    logging.info("Ultra tezkor Story bot ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
