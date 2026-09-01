@@ -32,11 +32,9 @@ ONLINE_START_TIME = None
 ONLINE_CHAT_ID = None
 ONLINE_TASK = None
 
-# User Status sozlamalari
 USER_STATUS_TASK = None
 USER_STATUS_RUNNING = False
 
-# Kanal Status sozlamalari
 CHANNEL_STATUS_TASK = None
 CHANNEL_STATUS_RUNNING = False
 CHANNEL_EMOJI_IDS = []
@@ -64,7 +62,6 @@ else:
     client = TelegramClient("ob_test_session", API_ID, API_HASH)
 
 async def load_finance_emojis():
-    """FinanceEmoji paketidan barcha document_id larni tortib olish"""
     global CHANNEL_EMOJI_IDS
     try:
         sticker_set = await client(GetStickerSetRequest(
@@ -76,7 +73,6 @@ async def load_finance_emojis():
     except Exception as e:
         logging.error(f"Emoji paketini yuklashda xato: {e}")
 
-# ==================== [USER AUTO STATUS (6s)] ====================
 async def user_status_rotator(emoji_ids):
     global USER_STATUS_RUNNING
     while USER_STATUS_RUNNING:
@@ -90,7 +86,6 @@ async def user_status_rotator(emoji_ids):
             logging.error(f"User Status xatoligi: {e}")
             await asyncio.sleep(STATUS_INTERVAL)
 
-# ==================== [KANAL AUTO STATUS (6s - FinanceEmoji)] ====================
 async def channel_status_rotator():
     global CHANNEL_STATUS_RUNNING, CHANNEL_EMOJI_IDS
     while CHANNEL_STATUS_RUNNING:
@@ -102,9 +97,9 @@ async def channel_status_rotator():
                     continue
 
             target_id = random.choice(CHANNEL_EMOJI_IDS)
-            channel_peer = await client.get_input_entity(TARGET_CHANNEL_ID)
+            channel_entity = await client.get_input_entity(TARGET_CHANNEL_ID)
             await client(ChannelUpdateEmojiStatusRequest(
-                channel=channel_peer,
+                channel=channel_entity,
                 emoji_status=EmojiStatus(document_id=int(target_id))
             ))
             await asyncio.sleep(STATUS_INTERVAL)
@@ -114,7 +109,6 @@ async def channel_status_rotator():
             logging.error(f"Kanal Status xatoligi: {e}")
             await asyncio.sleep(STATUS_INTERVAL)
 
-# ==================== [BUYRUQLAR ROUTER] ====================
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
     global ONLINE_START_TIME, ONLINE_CHAT_ID, ONLINE_TASK
@@ -129,7 +123,7 @@ async def handle_commands(event):
     cmd = parts[0].lower()
     arg = parts[1].strip() if len(parts) > 1 else ""
 
-    # 1. .on
+    # ==================== [.on] ====================
     if cmd == ".on":
         ONLINE_CHAT_ID = event.chat_id
         ONLINE_START_TIME = time.time()
@@ -149,7 +143,7 @@ async def handle_commands(event):
         ONLINE_TASK = asyncio.create_task(keep_active_ping())
         await event.edit("🟢 **24/7 Doimiy Online rejimi yoqildi!**")
 
-    # 2. .off
+    # ==================== [.off] ====================
     elif cmd == ".off":
         if ONLINE_TASK and not ONLINE_TASK.done():
             ONLINE_TASK.cancel()
@@ -159,7 +153,7 @@ async def handle_commands(event):
         else:
             await event.edit("ℹ️ Online rejimi faol emas edi.")
 
-    # 3. .emoji <Premium emojilar> (Shaxsiy profil)
+    # ==================== [.emoji] ====================
     elif cmd == ".emoji":
         c_ids = []
         if event.entities:
@@ -172,13 +166,17 @@ async def handle_commands(event):
                 await load_finance_emojis()
             c_ids = CHANNEL_EMOJI_IDS
 
+        if not c_ids:
+            await event.edit("❌ Emojilar topilmadi.")
+            return
+
         if USER_STATUS_RUNNING and USER_STATUS_TASK:
             USER_STATUS_TASK.cancel()
         USER_STATUS_RUNNING = True
         USER_STATUS_TASK = asyncio.create_task(user_status_rotator(c_ids))
         await event.edit(f"🎭 **Profil Emoji Status yoqildi!** ({len(c_ids)} ta emoji har 6 soniyada almashadi).")
 
-    # 4. .unemoji
+    # ==================== [.unemoji] ====================
     elif cmd in [".unemoji", ".unstatus"]:
         if USER_STATUS_RUNNING and USER_STATUS_TASK:
             USER_STATUS_RUNNING = False
@@ -186,14 +184,25 @@ async def handle_commands(event):
         await client(UpdateEmojiStatusRequest(emoji_status=EmojiStatusEmpty()))
         await event.edit("🗑 **Profil emoji statusi ochirildi.**")
 
-    # 5. .kanal (FinanceEmoji to'plami bilan kanal statusini yoqish)
+    # ==================== [.kanal] ====================
     elif cmd == ".kanal":
-        await event.edit("⏳ **FinanceEmoji to'plami tekshirilmoqda...**")
+        await event.edit("⏳ **Kanal tekshirilmoqda...**")
         if not CHANNEL_EMOJI_IDS:
             await load_finance_emojis()
 
         if not CHANNEL_EMOJI_IDS:
-            await event.edit("❌ FinanceEmoji stiker-paketi topilmadi yoki yuklab bo'lmadi.")
+            await event.edit("❌ `FinanceEmoji` to'plamini yuklab bo'lmadi.")
+            return
+
+        try:
+            channel_entity = await client.get_input_entity(TARGET_CHANNEL_ID)
+            test_id = random.choice(CHANNEL_EMOJI_IDS)
+            await client(ChannelUpdateEmojiStatusRequest(
+                channel=channel_entity,
+                emoji_status=EmojiStatus(document_id=int(test_id))
+            ))
+        except Exception as e:
+            await event.edit(f"❌ Kanal statusini o'zgartirib bo'lmadi:\n`{e}`\n\n*(Eslatma: Kanal yetarli darajadagi Boost darajasiga ega bo'lishi va akkauntingiz kanalda status o'zgartirish huquqiga ega bo'lishi kerak)*")
             return
 
         if CHANNEL_STATUS_RUNNING and CHANNEL_STATUS_TASK:
@@ -202,52 +211,52 @@ async def handle_commands(event):
         CHANNEL_STATUS_TASK = asyncio.create_task(channel_status_rotator())
         await event.edit(
             f"📢 **Kanal Emoji Status yoqildi!**\n"
-            f"🆔 Kanal ID: `{TARGET_CHANNEL_ID}`\n"
-            f"📦 Paket: `FinanceEmoji` ({len(CHANNEL_EMOJI_IDS)} ta emoji)\n"
-            f"⚡️ Tezlik: Har 6 soniyada random almashadi."
+            f"🆔 Kanal: `{TARGET_CHANNEL_ID}`\n"
+            f"📦 Paket: `FinanceEmoji` ({len(CHANNEL_EMOJI_IDS)} ta)\n"
+            f"⚡️ Har 6 soniyada random almashadi."
         )
 
-    # 6. .unkanal
+    # ==================== [.unkanal] ====================
     elif cmd in [".unkanal", ".unkanale"]:
         if CHANNEL_STATUS_RUNNING and CHANNEL_STATUS_TASK:
             CHANNEL_STATUS_RUNNING = False
             CHANNEL_STATUS_TASK.cancel()
         try:
-            channel_peer = await client.get_input_entity(TARGET_CHANNEL_ID)
+            channel_entity = await client.get_input_entity(TARGET_CHANNEL_ID)
             await client(ChannelUpdateEmojiStatusRequest(
-                channel=channel_peer,
+                channel=channel_entity,
                 emoji_status=EmojiStatusEmpty()
             ))
         except Exception:
             pass
         await event.edit("🛑 **Kanal emoji statusi toxtatildi.**")
 
-    # 7. .info
+    # ==================== [.info] ====================
     elif cmd in [".info", ".stat"]:
         uptime = format_duration(time.time() - BOT_START_TIME)
         on_desc = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 Ochiq"
         user_st = "🟢 Faol (6s)" if USER_STATUS_RUNNING else "🔴 Ochiq"
-        chan_st = f"🟢 Faol [FinanceEmoji - {len(CHANNEL_EMOJI_IDS)} ta]" if CHANNEL_STATUS_RUNNING else "🔴 Ochiq"
+        chan_st = f"🟢 Faol (6s)" if CHANNEL_STATUS_RUNNING else "🔴 Ochiq"
 
         stat_text = (
             f"📊 **USERBOT STATISTIKASI:**\n\n"
             f"⏳ **Uptime:** {uptime}\n"
             f"📶 **24/7 Doimiy Online:** {on_desc}\n"
-            f"🎭 **Profil Emoji Status:** {user_st}\n"
-            f"📢 **Kanal Emoji Status:** {chan_st}\n\n"
+            f"🎭 **Profil Status:** {user_st}\n"
+            f"📢 **Kanal Status:** {chan_st}\n\n"
             f"🛠 **Buyruqlar:**\n"
-            f"• `.on` / `.off` — 24/7 onlayn signali\n"
-            f"• `.emoji` / `.unemoji` — Profil statusi\n"
-            f"• `.kanal` / `.unkanal` — FinanceEmoji kanal statusi (6s)"
+            f"• `.on` / `.off` — Doimiy online\n"
+            f"• `.emoji` / `.unemoji` — Profil status\n"
+            f"• `.kanal` / `.unkanal` — Kanal status"
         )
         await event.edit(stat_text)
 
 async def handle_ping_web(request):
-    return web.Response(text="Custom Status & 24/7 Bot is running")
+    return web.Response(text="Bot is running 24/7")
 
 async def main():
     await client.start()
-    await load_finance_emojis()
+    asyncio.create_task(load_finance_emojis())
 
     app = web.Application()
     app.router.add_get('/', handle_ping_web)
@@ -255,7 +264,7 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
 
-    logging.info("Userbot FinanceEmoji bilan muvaffaqiyatli ishga tushdi!")
+    logging.info("Userbot muvaffaqiyatli ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
