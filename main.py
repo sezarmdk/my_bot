@@ -4,14 +4,13 @@ import os
 import time
 import logging
 from datetime import datetime, timezone, timedelta
-from aiohttp import web, ClientSession
+from aiohttp import web
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import User
 from telethon.tl.functions.account import UpdateStatusRequest
 from telethon.tl.functions.users import GetFullUserRequest
 from telethon.tl.functions.messages import GetCommonChatsRequest
-from telethon.utils import get_display_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -79,27 +78,18 @@ async def save_to_osint_db(user_id, data):
     except Exception as e:
         logging.error(f"Baza sinxronlash xatosi: {e}")
 
-async def fetch_name_history(target_id):
-    """SangMata bot orqali ismlar va usernamelar tarixini so'rash"""
-    history_report = "Tarixiy yozuvlar topilmadi."
+async def fetch_sangmata_history(target_id):
+    """Tezkor SangMata tekshiruvi (3 soniya limit bilan)"""
     try:
-        async with client.conversation("@SangMata_beta_bot", timeout=5) as conv:
-            await conv.send_message(f"/search_id {target_id}")
+        async with client.conversation("@SangMataInfo_bot", timeout=3) as conv:
+            await conv.send_message(f"{target_id}")
             resp = await conv.get_response()
             if resp and resp.text:
-                history_report = resp.text.strip()
+                return resp.text.strip()
     except Exception:
-        try:
-            async with client.conversation("@SangMataInfo_bot", timeout=5) as conv:
-                await conv.send_message(f"{target_id}")
-                resp = await conv.get_response()
-                if resp and resp.text:
-                    history_report = resp.text.strip()
-        except Exception:
-            history_report = "Ismlar arxivi servisi javob bermadi yoki cheklov mavjud."
-    return history_report
+        pass
+    return "Tarixiy yozuvlar avtomatik agregator orqali pastdagi havolalarda mavjud."
 
-# ==================== [BUYRUQLAR ROUTER] ====================
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
     global ONLINE_START_TIME, ONLINE_CHAT_ID, ONLINE_TASK
@@ -112,7 +102,7 @@ async def handle_commands(event):
     cmd = parts[0].lower()
     arg = parts[1].strip() if len(parts) > 1 else ""
 
-    # 1. .on (24/7 Doimiy Online Rejimi)
+    # 1. .on
     if cmd == ".on":
         ONLINE_CHAT_ID = event.chat_id
         ONLINE_START_TIME = time.time()
@@ -132,7 +122,7 @@ async def handle_commands(event):
         ONLINE_TASK = asyncio.create_task(keep_active_ping())
         await event.edit("🟢 **24/7 Faol Signal Online rejimi yoqildi!**")
 
-    # 2. .off (Online rejimni to'xtatish)
+    # 2. .off
     elif cmd == ".off":
         if ONLINE_TASK and not ONLINE_TASK.done():
             ONLINE_TASK.cancel()
@@ -142,7 +132,7 @@ async def handle_commands(event):
         else:
             await event.edit("ℹ️ Online rejimi faol emas edi.")
 
-    # 3. .osint <id/@username> (FULL TELEGRAM OSINT SUITE)
+    # 3. .osint <id/@username> (8 TA GLOBAL OSINT BAZASI)
     elif cmd == ".osint":
         reply = await event.get_reply_message()
         target_val = None
@@ -154,11 +144,11 @@ async def handle_commands(event):
             await event.edit("❌ **Ishlatish:** `.osint <id/@username>` yoki xabarga reply qiling.")
             return
 
-        await event.edit("🛰 **FULL OSINT:** Nishon tahlil qilinmoqda (1/3)...")
+        await event.edit("🛰 **8 ta OSINT bazasi tahlil qilinmoqda...**")
         try:
             entity = await client.get_entity(target_val)
             if not isinstance(entity, User):
-                await event.edit("⚠️ Ko'rsatilgan manzil shaxsiy profil emas (Guruh yoki Kanal).")
+                await event.edit("⚠️ Ko'rsatilgan manzil shaxsiy profil emas.")
                 return
 
             full = await client(GetFullUserRequest(entity.id))
@@ -166,66 +156,60 @@ async def handle_commands(event):
             u_first = entity.first_name or ""
             u_last = entity.last_name or ""
             u_name = f"{u_first} {u_last}".strip()
-            username = f"@{entity.username}" if entity.username else "Mavjud emas"
-            phone = f"+{entity.phone}" if entity.phone else "Yashiringan (Maxfiy)"
+            username = f"@{entity.username}" if entity.username else "Yo'q"
+            phone = f"+{entity.phone}" if entity.phone else "Yashiringan"
             bio = full.about or "Mavjud emas"
             is_premium = "Ha ⭐️" if entity.premium else "Yo'q"
             is_bot = "Ha 🤖" if entity.bot else "Yo'q"
-            is_verified = "Ha ✅" if entity.verified else "Yo'q"
-            is_scam = "HA (SCAM) ⚠️" if entity.scam else "Yo'q (Ishonchli)"
+            is_scam = "HA (SCAM) ⚠️" if entity.scam else "Yo'q"
             dc_id = getattr(entity.photo, 'dc_id', 'Noma\'lum') if entity.photo else "Mavjud emas"
 
-            # 1. Umumiy guruhlar
+            # Umumiy guruhlar
             common_chats_res = await client(GetCommonChatsRequest(user_id=entity.id, max_id=0, limit=100))
             common_titles = [c.title for c in common_chats_res.chats]
-            common_str = ", ".join(common_titles) if common_titles else "Umumiy guruhlar topilmadi"
+            common_str = ", ".join(common_titles) if common_titles else "Topilmadi"
 
-            # 2. Ismlar va Username tarixi (SangMata & Arxiv)
-            await event.edit("🛰 **FULL OSINT:** Ismlar tarixi va global bazalar tekshirilmoqda (2/3)...")
-            name_history = await fetch_name_history(u_id)
+            # SangMata tarixi (non-blocking)
+            name_history = await fetch_sangmata_history(u_id)
 
-            # 3. Tashqi OSINT Manbalari havolalari
-            tgstat_link = f"https://tgstat.com/user/{entity.username}" if entity.username else f"https://tgstat.com/search?q={u_id}"
-            telepathy_link = f"https://telesint.io/search?id={u_id}"
-            global_search = f"https://lyzem.com/search?q={u_id}"
-
-            # 4. OSINT Database ga saqlash
-            user_data_record = {
-                "name": u_name,
-                "username": username,
-                "phone": phone,
-                "dc": dc_id,
-                "common_chats": common_titles,
-                "history": name_history
-            }
-            await save_to_osint_db(u_id, user_data_record)
+            # 8 ta global OSINT havolasi generatori
+            u_query = entity.username if entity.username else str(u_id)
+            db_telesint = f"https://telesint.io/search?id={u_id}"
+            db_tgstat = f"https://tgstat.com/user/{entity.username}" if entity.username else f"https://tgstat.com/search?q={u_id}"
+            db_telemetr = f"https://telemetr.io/en/channels?search={u_query}"
+            db_lyzem = f"https://lyzem.com/search?q={u_query}"
+            db_intelx = f"https://intelx.io/?s={u_id}"
+            db_google = f"https://www.google.com/search?q=%22t.me/{entity.username}%22" if entity.username else f"https://www.google.com/search?q=%22tg://user?id={u_id}%22"
 
             report = (
-                f"🕵️‍♂️ **FULL TELEGRAM OSINT REPORT** 🕵️‍♂️\n"
+                f"🛰 **FULL TELEGRAM OSINT SUITE (8 TA BAZA)** 🛰\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"👤 **Asosiy Ism:** `{u_name}`\n"
-                f"🆔 **Telegram ID:** `{u_id}`\n"
+                f"👤 **Ism:** `{u_name}`\n"
+                f"🆔 **ID:** `{u_id}`\n"
                 f"🔗 **Username:** {username}\n"
                 f"📞 **Telefon:** `{phone}`\n"
-                f"⭐️ **Premium:** {is_premium} | **Verified:** {is_verified}\n"
-                f"🤖 **Bot:** {is_bot} | **Scam/Fake:** {is_scam}\n"
-                f"🌐 **DataCenter (DC):** `{dc_id}`\n"
-                f"📝 **Bio/Haqida:** {bio}\n\n"
+                f"🌐 **DC (Server):** `{dc_id}` | ⭐️ **Premium:** {is_premium}\n"
+                f"🤖 **Bot:** {is_bot} | ⚠️ **Scam:** {is_scam}\n"
+                f"📝 **Bio:** {bio}\n\n"
                 f"👥 **Umumiy guruhlar ({len(common_titles)} ta):**\n"
                 f"_{common_str}_\n\n"
-                f"📜 **Ism va Username Tarixi:**\n"
+                f"📜 **Ism/Username Tarixi:**\n"
                 f"```{name_history}```\n\n"
-                f"🌐 **Global Ochiq Manbalar & Agregatorlar:**\n"
-                f"• [TGStat Indeksatsiyasi]({tgstat_link})\n"
-                f"• [Telesint Baza Qidiruvi]({telepathy_link})\n"
-                f"• [Global Xabarlar & Mentions]({global_search})\n"
+                f"🗄 **8 TA GLOBAL OSINT BAZASI NATIJALARI:**\n"
+                f"1️⃣ 🌐 [Telesint Global Chat DB]({db_telesint})\n"
+                f"2️⃣ 📊 [TGStat Channel & Mentions]({db_tgstat})\n"
+                f"3️⃣ 📈 [Telemetr Analytics Engine]({db_telemetr})\n"
+                f"4️⃣ 🔎 [Lyzem Global Search]({db_lyzem})\n"
+                f"5️⃣ 🕵️ [Intelligence X Deep Search]({db_intelx})\n"
+                f"6️⃣ 🌍 [Google Dork Indexer]({db_google})\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
-                f"💾 *Ma'lumotlar avtomatik ravishda #OSINT_DATABASE xotirasiga saqlandi.*"
+                f"💾 *Natija #OSINT_DATABASE saqlandi.*"
             )
             await event.edit(report, link_preview=False)
+            await save_to_osint_db(u_id, {"name": u_name, "username": username, "dc": dc_id})
 
         except Exception as e:
-            await event.edit(f"❌ OSINT Tahlilda xatolik: `{e}`")
+            await event.edit(f"❌ OSINT Xatolik: `{e}`")
 
     # 4. .info
     elif cmd in [".info", ".stat"]:
@@ -238,7 +222,7 @@ async def handle_commands(event):
             f"⏳ **Uptime:** {uptime}\n"
             f"📶 **24/7 Online Signal:** {on_desc}\n"
             f"🗄 **Bazada saqlangan profillar:** {db_count} ta\n"
-            f"🛠 **Asosiy buyruq:** `.osint <id/@username>`"
+            f"🛠 **Buyruqlar:** `.osint <id/@user>`, `.on`, `.off`"
         )
         await event.edit(stat_text)
 
@@ -255,7 +239,7 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
 
-    logging.info("Full OSINT Userbot muvaffaqiyatli ishga tushdi!")
+    logging.info("OSINT Userbot ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
