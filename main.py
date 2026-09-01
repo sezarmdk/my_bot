@@ -111,7 +111,7 @@ async def notify_log_channel(text, file=None):
 
 async def ask_gemini_ai(prompt_text, system_instruction=None):
     if not GEMINI_KEY:
-        return "⚠️ Gemini API kaliti topilmadi! Render'dagi Environment Variables bo'limiga GEMINI_API_KEY o'zgaruvchisini qo'shing."
+        return "⚠️ Gemini API kaliti topilmadi! Render muhit sozlamalariga GEMINI_API_KEY qo'shing."
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
     sys_inst = system_instruction or "Sen foydalanuvchining shaxsiy aqlli yordamchisisan. Har qanday savolga o'zbek tilida aniq, tushunarli va do'stona javob ber."
@@ -128,7 +128,8 @@ async def ask_gemini_ai(prompt_text, system_instruction=None):
                 if "candidates" in data and len(data["candidates"]) > 0:
                     return data["candidates"][0]["content"]["parts"][0]["text"]
                 elif "error" in data:
-                    return f"⚠️ AI Xatolik: {data['error'].get('message', 'Noma\\'lum xato')}"
+                    err_msg = data["error"].get("message", "Xatolik")
+                    return f"⚠️ AI Xatolik: {err_msg}"
                 return "⚠️ AI javob bera olmadi."
     except Exception as e:
         return f"⚠️ Ulanish xatosi: {e}"
