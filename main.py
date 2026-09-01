@@ -151,35 +151,44 @@ async def handle_commands(event):
                 await event.edit("⚠️ Ko'rsatilgan manzil shaxsiy profil emas.")
                 return
 
-            full = await client(GetFullUserRequest(entity.id))
+            full_data = await client(GetFullUserRequest(entity.id))
+            full_user_obj = getattr(full_data, 'full_user', full_data)
+            
             u_id = entity.id
-            u_first = entity.first_name or ""
-            u_last = entity.last_name or ""
-            u_name = f"{u_first} {u_last}".strip()
-            username = f"@{entity.username}" if entity.username else "Yo'q"
-            phone = f"+{entity.phone}" if entity.phone else "Yashiringan"
-            bio = full.about or "Mavjud emas"
-            is_premium = "Ha ⭐️" if entity.premium else "Yo'q"
-            is_bot = "Ha 🤖" if entity.bot else "Yo'q"
-            is_scam = "HA (SCAM) ⚠️" if entity.scam else "Yo'q"
-            dc_id = getattr(entity.photo, 'dc_id', 'Noma\'lum') if entity.photo else "Mavjud emas"
+            u_first = getattr(entity, 'first_name', '') or ""
+            u_last = getattr(entity, 'last_name', '') or ""
+            u_name = f"{u_first} {u_last}".strip() or "Noma'lum"
+            username = f"@{entity.username}" if getattr(entity, 'username', None) else "Yo'q"
+            phone = f"+{entity.phone}" if getattr(entity, 'phone', None) else "Yashiringan"
+            
+            bio = getattr(full_user_obj, 'about', None) or "Mavjud emas"
+            is_premium = "Ha ⭐️" if getattr(entity, 'premium', False) else "Yo'q"
+            is_bot = "Ha 🤖" if getattr(entity, 'bot', False) else "Yo'q"
+            is_scam = "HA (SCAM) ⚠️" if getattr(entity, 'scam', False) else "Yo'q"
+            
+            photo_obj = getattr(entity, 'photo', None)
+            dc_id = getattr(photo_obj, 'dc_id', 'Mavjud emas') if photo_obj else "Mavjud emas"
 
             # Umumiy guruhlar
-            common_chats_res = await client(GetCommonChatsRequest(user_id=entity.id, max_id=0, limit=100))
-            common_titles = [c.title for c in common_chats_res.chats]
+            common_titles = []
+            try:
+                common_chats_res = await client(GetCommonChatsRequest(user_id=entity.id, max_id=0, limit=100))
+                common_titles = [c.title for c in common_chats_res.chats]
+            except Exception:
+                pass
             common_str = ", ".join(common_titles) if common_titles else "Topilmadi"
 
             # SangMata tarixi (non-blocking)
             name_history = await fetch_sangmata_history(u_id)
 
             # 8 ta global OSINT havolasi generatori
-            u_query = entity.username if entity.username else str(u_id)
+            u_query = entity.username if getattr(entity, 'username', None) else str(u_id)
             db_telesint = f"https://telesint.io/search?id={u_id}"
-            db_tgstat = f"https://tgstat.com/user/{entity.username}" if entity.username else f"https://tgstat.com/search?q={u_id}"
+            db_tgstat = f"https://tgstat.com/user/{entity.username}" if getattr(entity, 'username', None) else f"https://tgstat.com/search?q={u_id}"
             db_telemetr = f"https://telemetr.io/en/channels?search={u_query}"
             db_lyzem = f"https://lyzem.com/search?q={u_query}"
             db_intelx = f"https://intelx.io/?s={u_id}"
-            db_google = f"https://www.google.com/search?q=%22t.me/{entity.username}%22" if entity.username else f"https://www.google.com/search?q=%22tg://user?id={u_id}%22"
+            db_google = f"https://www.google.com/search?q=%22t.me/{entity.username}%22" if getattr(entity, 'username', None) else f"https://www.google.com/search?q=%22tg://user?id={u_id}%22"
 
             report = (
                 f"🛰 **FULL TELEGRAM OSINT SUITE (8 TA BAZA)** 🛰\n"
