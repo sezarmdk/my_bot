@@ -111,10 +111,10 @@ async def notify_log_channel(text, file=None):
 
 async def ask_gemini_ai(prompt_text, system_instruction=None):
     if not GEMINI_KEY:
-        return "⚠️ Gemini API kaliti topilmadi! Render muhit sozlamalariga GEMINI_API_KEY qo'shing."
+        return "⚠️ Gemini API kaliti topilmadi! Render muhit sozlamalariga GEMINI_API_KEY qoshing."
     
     url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={GEMINI_KEY}"
-    sys_inst = system_instruction or "Sen foydalanuvchining shaxsiy aqlli yordamchisisan. Har qanday savolga o'zbek tilida aniq, tushunarli va do'stona javob ber."
+    sys_inst = system_instruction or "Sen foydalanuvchining shaxsiy aqlli yordamchisisan. Har qanday savolga ozbek tilida aniq, tushunarli va dostona javob ber."
     
     payload = {
         "contents": [{"parts": [{"text": prompt_text}]}],
@@ -159,7 +159,7 @@ async def check_stories():
                         u_name = get_display_name(full_user) or info.get("name", "Target")
                         now_s = get_uz_time().strftime("%H:%M:%S")
                         await notify_log_channel(
-                            f"👁 **Tezkor Story ko'rildi va ❤️ bosildi!**\n"
+                            f"👁 **Tezkor Story korildi va ❤️ bosildi!**\n"
                             f"👤 **Foydalanuvchi:** {u_name} (`{uid_str}`)\n"
                             f"🆔 **Story ID:** `{sid}`\n"
                             f"🕒 **Vaqt:** {now_s}"
@@ -233,7 +233,7 @@ async def handle_commands(event):
             ONLINE_TASK.cancel()
             ONLINE_TASK = None
             ONLINE_START_TIME = None
-            await event.edit("🔴 **Online signallash to'xtatildi.**")
+            await event.edit("🔴 **Online signallash toxtatildi.**")
         else:
             await event.edit("ℹ️ Online rejimi faol emas edi.")
 
@@ -247,7 +247,7 @@ async def handle_commands(event):
             await event.edit("❌ **Ishlatish:** `.ai <savol>` yoki xabarga reply qilib `.ai`")
             return
 
-        await event.edit("🤖 *Gemini AI o'ylamoqda...*")
+        await event.edit("🤖 *Gemini AI oylamoqda...*")
         answer = await ask_gemini_ai(full_query)
         await event.edit(f"🤖 **Gemini Yordamchi:**\n\n{answer}")
 
@@ -262,7 +262,7 @@ async def handle_commands(event):
             u_name = get_display_name(ent) or "Target"
             DATA_STORAGE.setdefault("story_targets", {})[u_id] = {"name": u_name}
             await sync_storage()
-            await event.edit(f"✅ **Kuzatuvga qo'shildi:**\n👤 `{u_name}` (`{u_id}`)")
+            await event.edit(f"✅ **Kuzatuvga qoshildi:**\n👤 `{u_name}` (`{u_id}`)")
         except Exception as e:
             await event.edit(f"❌ Xatolik: `{e}`")
 
@@ -278,9 +278,9 @@ async def handle_commands(event):
             if u_id in targets:
                 del targets[u_id]
                 await sync_storage()
-                await event.edit(f"🗑 **Kuzatuvdan o'chirildi:** `{get_display_name(ent)}`")
+                await event.edit(f"🗑 **Kuzatuvdan ochirildi:** `{get_display_name(ent)}`")
             else:
-                await event.edit("⚠️ Bu foydalanuvchi kuzatuvda yo'q.")
+                await event.edit("⚠️ Bu foydalanuvchi kuzatuvda yoq.")
         except Exception as e:
             await event.edit(f"❌ Xatolik: `{e}`")
 
@@ -332,7 +332,7 @@ async def handle_commands(event):
 
     elif cmd == ".seeall":
         SEEALL_ENABLED = not SEEALL_ENABLED
-        st = "🟢 Yoqildi" if SEEALL_ENABLED else "🔴 O'chirildi"
+        st = "🟢 Yoqildi" if SEEALL_ENABLED else "🔴 Ochirildi"
         await event.edit(f"👁 **SeeAll (Log kanalga saqlash):** {st}")
 
     elif cmd == ".autoread":
@@ -340,7 +340,7 @@ async def handle_commands(event):
         await event.edit("🟢 **Auto-Read yoqildi.**")
     elif cmd == ".unread":
         AUTO_READ_ENABLED = False
-        await event.edit("🔴 **Auto-Read to'xtatildi.**")
+        await event.edit("🔴 **Auto-Read toxtatildi.**")
 
     elif cmd == ".emoji":
         c_ids = []
@@ -375,14 +375,14 @@ async def handle_commands(event):
     elif cmd == ".xabarx":
         c_id = event.chat_id
         if c_id in EFFECT_TARGET_CHATS: EFFECT_TARGET_CHATS.remove(c_id)
-        await event.edit("🛑 **Animatsiyali rejim o'chirildi.**")
+        await event.edit("🛑 **Animatsiyali rejim ochirildi.**")
 
     elif cmd in [".quote", ".q"]:
         reply = await event.get_reply_message()
         if not reply or not reply.text:
             await event.edit("❌ Matnli xabarga reply qiling!")
             return
-        author = get_display_name(await reply.get_sender()) or "Noma'lum"
+        author = get_display_name(await reply.get_sender()) or "Nomalum"
         q_text = f"╔══════════════════╗\n  ❝ {reply.text} ❞\n  — *{author}*\n╚══════════════════╝"
         await event.edit(q_text)
 
@@ -394,25 +394,28 @@ async def handle_commands(event):
                 await m.delete()
                 deleted += 1
                 if deleted >= count: break
-        del_msg = await client.send_message(event.chat_id, f"🧹 `{deleted}` ta xabaringiz o'chirildi.")
+        del_msg = await client.send_message(event.chat_id, f"🧹 `{deleted}` ta xabaringiz ochirildi.")
         await asyncio.sleep(2)
         await del_msg.delete()
 
     elif cmd in [".info", ".stat"]:
         uptime = format_duration(time.time() - BOT_START_TIME)
-        on_desc = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 O'chiq"
+        on_desc = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 Ochiq"
         st_count = len(DATA_STORAGE.get("story_targets", {}))
         tr_count = len(ACTIVE_TRACKS)
+        auto_stat_str = "🟢 Faol (6s)" if AUTO_STATUS_RUNNING else "🔴 Ochiq"
+        auto_read_str = "🟢 Yoqilgan" if AUTO_READ_ENABLED else "🔴 Ochiq"
+        seeall_str = "🟢 Faol" if SEEALL_ENABLED else "🔴 Ochiq"
         
         stat_text = (
             f"📊 **USERBOT STATISTIKASI:**\n\n"
             f"⏳ **Uptime:** {uptime}\n"
             f"📶 **24/7 Signal Online:** {on_desc}\n"
-            f"🎭 **Auto Emoji Status:** {'🟢 Faol (6s)' if AUTO_STATUS_RUNNING else '🔴 O\\'chiq'}\n"
-            f"👁 **Auto-Read:** {'🟢 Yoqilgan' if AUTO_READ_ENABLED else '🔴 O\\'chiq'}\n"
+            f"🎭 **Auto Emoji Status:** {auto_stat_str}\n"
+            f"👁 **Auto-Read:** {auto_read_str}\n"
             f"📸 **Kuzatuvdagi Storylar:** {st_count} ta\n"
             f"🕵️‍♂️ **Track qilinayotgan chatlar:** {tr_count} ta\n"
-            f"🛡 **SeeAll Log:** {'🟢 Faol' if SEEALL_ENABLED else '🔴 O\\'chiq'}"
+            f"🛡 **SeeAll Log:** {seeall_str}"
         )
         await event.edit(stat_text)
 
@@ -432,11 +435,11 @@ async def handle_deleted_msgs(event):
         for cid, msgs in TRACKED_CHATS.items():
             for m in msgs:
                 if m["id"] == mid:
-                    m["status"] = "O'CHIRILDI ❌"
+                    m["status"] = "OCHIRILDI ❌"
                     m["deleted_at"] = get_uz_time().strftime("%H:%M:%S")
         
         if SEEALL_ENABLED:
-            await notify_log_channel(f"🗑 **Xabar o'chirildi!**\n🆔 Xabar ID: `{mid}`\n🕒 Vaqt: `{get_uz_time().strftime('%H:%M:%S')}`")
+            await notify_log_channel(f"🗑 **Xabar ochirildi!**\n🆔 Xabar ID: `{mid}`\n🕒 Vaqt: `{get_uz_time().strftime('%H:%M:%S')}`")
 
 @client.on(events.MessageEdited)
 async def handle_edited_msgs(event):
@@ -448,7 +451,7 @@ async def handle_edited_msgs(event):
         })
     if SEEALL_ENABLED and event.is_private:
         sender = await event.get_sender()
-        name = get_display_name(sender) if sender else "Noma'lum"
+        name = get_display_name(sender) if sender else "Nomalum"
         await notify_log_channel(
             f"✏️ **Xabar tahrirlandi!**\n👤 **Kim:** {name}\n📝 **Yangi matn:** {event.text}\n🕒 Vaqt: `{get_uz_time().strftime('%H:%M:%S')}`"
         )
