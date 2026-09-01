@@ -1,26 +1,16 @@
 import asyncio
 import json
 import os
-import random
 import time
 import logging
 from datetime import datetime, timezone, timedelta
 from aiohttp import web, ClientSession
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.errors import FloodWaitError
-from telethon.tl.types import (
-    ReactionEmoji,
-    EmojiStatus,
-    EmojiStatusEmpty,
-    MessageEntityCustomEmoji
-)
-from telethon.tl.functions.account import UpdateStatusRequest, UpdateEmojiStatusRequest
-from telethon.tl.functions.stories import (
-    GetPeerStoriesRequest,
-    ReadStoriesRequest,
-    SendReactionRequest
-)
+from telethon.tl.types import User
+from telethon.tl.functions.account import UpdateStatusRequest
+from telethon.tl.functions.users import GetFullUserRequest
+from telethon.tl.functions.messages import GetCommonChatsRequest
 from telethon.utils import get_display_name
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -29,19 +19,12 @@ API_ID = int(os.environ.get("API_ID", 32261789))
 API_HASH = os.environ.get("API_HASH", "06254a37741c127fd669909f57e67168")
 SESSION_STRING = os.environ.get("SESSION_STRING")
 LOG_CHANNEL_ID = int(os.environ.get("LOG_CHANNEL_ID", -1004327250392))
-GEMINI_KEY = os.environ.get("GEMINI_API_KEY", "")
 PORT = int(os.environ.get("PORT", 8080))
 
 BOT_START_TIME = time.time()
 ONLINE_START_TIME = None
 ONLINE_CHAT_ID = None
 ONLINE_TASK = None
-AUTO_READ_ENABLED = False
-
-# Auto-Status sozlamalari
-AUTO_STATUS_TASK = None
-AUTO_STATUS_RUNNING = False
-STATUS_INTERVAL = 6.0
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -58,10 +41,7 @@ def format_duration(seconds):
     parts.append(f"{seconds} soniya")
     return ", ".join(parts) if parts else "0 soniya"
 
-DATA_STORAGE = {
-    "story_targets": {},
-    "viewed_stories": {}
-}
+OSINT_CACHE = {}
 STORAGE_MSG_ID = None
 
 if SESSION_STRING:
@@ -69,135 +49,60 @@ if SESSION_STRING:
 else:
     client = TelegramClient("ob_test_session", API_ID, API_HASH)
 
-async def init_storage():
-    global DATA_STORAGE, STORAGE_MSG_ID
+async def init_osint_storage():
+    global OSINT_CACHE, STORAGE_MSG_ID
     try:
-        async for msg in client.iter_messages("me", search="#STORY_BOT_BACKUP", limit=1):
+        async for msg in client.iter_messages("me", search="#OSINT_DATABASE", limit=1):
             if msg.raw_text:
-                raw_json = msg.raw_text.replace("#STORY_BOT_BACKUP\n", "")
-                DATA_STORAGE = json.loads(raw_json)
+                raw_json = msg.raw_text.replace("#OSINT_DATABASE\n", "")
+                OSINT_CACHE = json.loads(raw_json)
                 STORAGE_MSG_ID = msg.id
                 return
-        created_msg = await client.send_message("me", f"#STORY_BOT_BACKUP\n{json.dumps(DATA_STORAGE, ensure_ascii=False)}")
+        created_msg = await client.send_message("me", f"#OSINT_DATABASE\n{json.dumps(OSINT_CACHE, ensure_ascii=False)}")
         STORAGE_MSG_ID = created_msg.id
     except Exception as e:
-        logging.error(f"Xotira xatosi: {e}")
+        logging.error(f"OSINT baza xatosi: {e}")
 
-async def sync_storage():
-    global DATA_STORAGE, STORAGE_MSG_ID
+async def save_to_osint_db(user_id, data):
+    global OSINT_CACHE, STORAGE_MSG_ID
     try:
-        content = f"#STORY_BOT_BACKUP\n{json.dumps(DATA_STORAGE, ensure_ascii=False)}"
+        OSINT_CACHE[str(user_id)] = {
+            "last_updated": get_uz_time().strftime("%Y-%m-%d %H:%M:%S"),
+            "data": data
+        }
+        content = f"#OSINT_DATABASE\n{json.dumps(OSINT_CACHE, ensure_ascii=False, indent=2)}"
         if STORAGE_MSG_ID:
             await client.edit_message("me", STORAGE_MSG_ID, content)
         else:
             msg = await client.send_message("me", content)
             STORAGE_MSG_ID = msg.id
     except Exception as e:
-        logging.error(f"Sync xatosi: {e}")
+        logging.error(f"Baza sinxronlash xatosi: {e}")
 
-async def notify_log_channel(text):
+async def fetch_name_history(target_id):
+    """SangMata bot orqali ismlar va usernamelar tarixini so'rash"""
+    history_report = "Tarixiy yozuvlar topilmadi."
     try:
-        await client.send_message(LOG_CHANNEL_ID, text)
-    except Exception as e:
-        logging.error(f"Log kanal xatosi: {e}")
-
-# ==================== [GEMINI PRO AI] ====================
-async def ask_gemini_ai(prompt_text, system_instruction=None):
-    if not GEMINI_KEY:
-        return "⚠️ Gemini API kaliti topilmadi! Render muhit sozlamalariga GEMINI_API_KEY qoshing."
-    
-    # Model zaxiralari bilan sinash (gemini-1.5-pro -> gemini-pro)
-    models = ["gemini-1.5-pro", "gemini-pro"]
-    sys_inst = system_instruction or "Sen foydalanuvchining shaxsiy aqlli yordamchisisan. Har qanday savolga ozbek tilida aniq, tushunarli va dostona javob ber."
-
-    for mod in models:
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{mod}:generateContent?key={GEMINI_KEY}"
-        payload = {
-            "contents": [{"parts": [{"text": prompt_text}]}]
-        }
-        if "1.5" in mod:
-            payload["systemInstruction"] = {"parts": [{"text": sys_inst}]}
-        
+        async with client.conversation("@SangMata_beta_bot", timeout=5) as conv:
+            await conv.send_message(f"/search_id {target_id}")
+            resp = await conv.get_response()
+            if resp and resp.text:
+                history_report = resp.text.strip()
+    except Exception:
         try:
-            async with ClientSession() as session:
-                async with session.post(url, json=payload, timeout=30) as resp:
-                    data = await resp.json()
-                    if "candidates" in data and len(data["candidates"]) > 0:
-                        return data["candidates"][0]["content"]["parts"][0]["text"]
-                    elif "error" in data:
-                        err_msg = data["error"].get("message", "")
-                        logging.warning(f"{mod} xatosi: {err_msg}")
-        except Exception as e:
-            logging.error(f"AI ulanish xatosi ({mod}): {e}")
-
-    return "⚠️ AI bilan ulanishda xatolik yuz berdi. API kalit to'g'riligini tekshiring."
-
-# ==================== [STORY MONITORING (4-5s Fast)] ====================
-async def check_stories():
-    targets = DATA_STORAGE.get("story_targets", {})
-    for uid_str, info in list(targets.items()):
-        try:
-            uid = int(uid_str) if uid_str.lstrip("-").isdigit() else uid_str
-            peer = await client.get_input_entity(uid)
-            full_user = await client.get_entity(uid)
-            
-            res = await client(GetPeerStoriesRequest(peer=peer))
-            if hasattr(res, "stories") and res.stories:
-                viewed = DATA_STORAGE.setdefault("viewed_stories", {}).setdefault(str(uid_str), [])
-                new_sids = []
-                for st in res.stories.stories:
-                    sid = getattr(st, "id", None)
-                    if sid and sid not in viewed:
-                        new_sids.append(sid)
-                        viewed.append(sid)
-                        try:
-                            await client(SendReactionRequest(peer=peer, story_id=sid, reaction=[ReactionEmoji(emoticon="❤️")]))
-                        except Exception:
-                            pass
-                        
-                        u_name = get_display_name(full_user) or info.get("name", "Target")
-                        now_s = get_uz_time().strftime("%H:%M:%S")
-                        await notify_log_channel(
-                            f"👁 **Tezkor Story korildi va ❤️ bosildi!**\n"
-                            f"👤 **Foydalanuvchi:** {u_name} (`{uid_str}`)\n"
-                            f"🆔 **Story ID:** `{sid}`\n"
-                            f"🕒 **Vaqt:** {now_s}"
-                        )
-                if new_sids:
-                    await client(ReadStoriesRequest(peer=peer, max_id=max(new_sids)))
-                    await sync_storage()
+            async with client.conversation("@SangMataInfo_bot", timeout=5) as conv:
+                await conv.send_message(f"{target_id}")
+                resp = await conv.get_response()
+                if resp and resp.text:
+                    history_report = resp.text.strip()
         except Exception:
-            pass
-        await asyncio.sleep(0.5)
-
-async def story_monitoring_loop():
-    while True:
-        try:
-            if DATA_STORAGE.get("story_targets"):
-                await check_stories()
-        except Exception as e:
-            logging.error(f"Story sikl: {e}")
-        await asyncio.sleep(4)
-
-# ==================== [AUTO STATUS DVIJOKI (6s)] ====================
-async def auto_status_rotator(emoji_ids):
-    global AUTO_STATUS_RUNNING
-    while AUTO_STATUS_RUNNING:
-        try:
-            target_id = random.choice(emoji_ids)
-            await client(UpdateEmojiStatusRequest(emoji_status=EmojiStatus(document_id=int(target_id))))
-            await asyncio.sleep(STATUS_INTERVAL)
-        except FloodWaitError as fe:
-            await asyncio.sleep(fe.seconds + 2)
-        except Exception as e:
-            logging.error(f"Status xato: {e}")
-            await asyncio.sleep(STATUS_INTERVAL)
+            history_report = "Ismlar arxivi servisi javob bermadi yoki cheklov mavjud."
+    return history_report
 
 # ==================== [BUYRUQLAR ROUTER] ====================
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
-    global ONLINE_START_TIME, ONLINE_CHAT_ID, ONLINE_TASK, AUTO_READ_ENABLED
-    global AUTO_STATUS_TASK, AUTO_STATUS_RUNNING, DATA_STORAGE
+    global ONLINE_START_TIME, ONLINE_CHAT_ID, ONLINE_TASK
 
     text = (event.raw_text or "").strip()
     if not text.startswith("."):
@@ -207,7 +112,7 @@ async def handle_commands(event):
     cmd = parts[0].lower()
     arg = parts[1].strip() if len(parts) > 1 else ""
 
-    # 1. .on (30s signal bilan Online)
+    # 1. .on (24/7 Doimiy Online Rejimi)
     if cmd == ".on":
         ONLINE_CHAT_ID = event.chat_id
         ONLINE_START_TIME = time.time()
@@ -227,7 +132,7 @@ async def handle_commands(event):
         ONLINE_TASK = asyncio.create_task(keep_active_ping())
         await event.edit("🟢 **24/7 Faol Signal Online rejimi yoqildi!**")
 
-    # 2. .off
+    # 2. .off (Online rejimni to'xtatish)
     elif cmd == ".off":
         if ONLINE_TASK and not ONLINE_TASK.done():
             ONLINE_TASK.cancel()
@@ -237,143 +142,112 @@ async def handle_commands(event):
         else:
             await event.edit("ℹ️ Online rejimi faol emas edi.")
 
-    # 3. .ai <savol>
-    elif cmd == ".ai":
-        reply_to = await event.get_reply_message()
-        full_query = arg
-        if reply_to and reply_to.text:
-            full_query = f"Quyidagi xabarni hisobga olib javob ber:\n\"{reply_to.text}\"\n\nSavol: {arg}" if arg else reply_to.text
-        
-        if not full_query:
-            await event.edit("❌ **Ishlatish:** `.ai <savol>` yoki xabarga reply qilib `.ai`")
-            return
-
-        await event.edit("🤖 *Gemini AI oylamoqda...*")
-        answer = await ask_gemini_ai(full_query)
-        await event.edit(f"🤖 **Gemini Yordamchi:**\n\n{answer}")
-
-    # 4. .story <id/@user>
-    elif cmd == ".story":
-        if not arg:
-            await event.edit("❌ **Ishlatish:** `.story <id/@username>`")
-            return
-        try:
-            target_p = int(arg) if arg.lstrip("-").isdigit() else arg
-            ent = await client.get_entity(target_p)
-            u_id = str(ent.id)
-            u_name = get_display_name(ent) or "Target"
-            DATA_STORAGE.setdefault("story_targets", {})[u_id] = {"name": u_name}
-            await sync_storage()
-            await event.edit(f"✅ **Kuzatuvga qoshildi:**\n👤 `{u_name}` (`{u_id}`)")
-        except Exception as e:
-            await event.edit(f"❌ Xatolik: `{e}`")
-
-    # 5. .unstory <id/@user>
-    elif cmd == ".unstory":
-        if not arg:
-            await event.edit("❌ **Ishlatish:** `.unstory <id/@username>`")
-            return
-        try:
-            target_p = int(arg) if arg.lstrip("-").isdigit() else arg
-            ent = await client.get_entity(target_p)
-            u_id = str(ent.id)
-            targets = DATA_STORAGE.get("story_targets", {})
-            if u_id in targets:
-                del targets[u_id]
-                await sync_storage()
-                await event.edit(f"🗑 **Kuzatuvdan ochirildi:** `{get_display_name(ent)}`")
-            else:
-                await event.edit("⚠️ Bu foydalanuvchi kuzatuvda yoq.")
-        except Exception as e:
-            await event.edit(f"❌ Xatolik: `{e}`")
-
-    # 6. .autoread / .unread
-    elif cmd == ".autoread":
-        AUTO_READ_ENABLED = True
-        await event.edit("🟢 **Auto-Read yoqildi.**")
-    elif cmd == ".unread":
-        AUTO_READ_ENABLED = False
-        await event.edit("🔴 **Auto-Read toxtatildi.**")
-
-    # 7. .emoji <emojilar> (6s)
-    elif cmd == ".emoji":
-        c_ids = []
-        if event.entities:
-            for ent in event.entities:
-                if isinstance(ent, MessageEntityCustomEmoji):
-                    c_ids.append(int(ent.document_id))
-        if not c_ids:
-            await event.edit("❌ Telegram Premium maxsus emojilarni kiriting (Har 6 soniyada random almashadi).")
-            return
-        if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
-            AUTO_STATUS_TASK.cancel()
-        AUTO_STATUS_RUNNING = True
-        AUTO_STATUS_TASK = asyncio.create_task(auto_status_rotator(c_ids))
-        await event.edit(f"🎭 **Auto Emoji Status yoqildi!** ({len(c_ids)} ta emoji har 6 soniyada).")
-
-    # 8. .unemoji
-    elif cmd in [".unemoji", ".unstatus", ".unstat"]:
-        if AUTO_STATUS_RUNNING and AUTO_STATUS_TASK:
-            AUTO_STATUS_RUNNING = False
-            AUTO_STATUS_TASK.cancel()
-        await client(UpdateEmojiStatusRequest(emoji_status=EmojiStatusEmpty()))
-        await event.edit("🗑 **Emoji status tozalab tashlandi.**")
-
-    # 9. .quote / .q
-    elif cmd in [".quote", ".q"]:
+    # 3. .osint <id/@username> (FULL TELEGRAM OSINT SUITE)
+    elif cmd == ".osint":
         reply = await event.get_reply_message()
-        if not reply or not reply.text:
-            await event.edit("❌ Matnli xabarga reply qiling!")
+        target_val = None
+        if arg:
+            target_val = int(arg) if arg.lstrip("-").isdigit() else arg
+        elif reply:
+            target_val = reply.sender_id
+        else:
+            await event.edit("❌ **Ishlatish:** `.osint <id/@username>` yoki xabarga reply qiling.")
             return
-        author = get_display_name(await reply.get_sender()) or "Nomalum"
-        q_text = f"╔══════════════════╗\n  ❝ {reply.text} ❞\n  — *{author}*\n╚══════════════════╝"
-        await event.edit(q_text)
 
-    # 10. .purge <soni>
-    elif cmd == ".purge":
-        count = int(arg) if arg.isdigit() else 10
-        deleted = 0
-        async for m in client.iter_messages(event.chat_id, limit=count * 2):
-            if m.out:
-                await m.delete()
-                deleted += 1
-                if deleted >= count: break
-        del_msg = await client.send_message(event.chat_id, f"🧹 `{deleted}` ta xabaringiz ochirildi.")
-        await asyncio.sleep(2)
-        await del_msg.delete()
+        await event.edit("🛰 **FULL OSINT:** Nishon tahlil qilinmoqda (1/3)...")
+        try:
+            entity = await client.get_entity(target_val)
+            if not isinstance(entity, User):
+                await event.edit("⚠️ Ko'rsatilgan manzil shaxsiy profil emas (Guruh yoki Kanal).")
+                return
 
-    # 11. .info / .stat
+            full = await client(GetFullUserRequest(entity.id))
+            u_id = entity.id
+            u_first = entity.first_name or ""
+            u_last = entity.last_name or ""
+            u_name = f"{u_first} {u_last}".strip()
+            username = f"@{entity.username}" if entity.username else "Mavjud emas"
+            phone = f"+{entity.phone}" if entity.phone else "Yashiringan (Maxfiy)"
+            bio = full.about or "Mavjud emas"
+            is_premium = "Ha ⭐️" if entity.premium else "Yo'q"
+            is_bot = "Ha 🤖" if entity.bot else "Yo'q"
+            is_verified = "Ha ✅" if entity.verified else "Yo'q"
+            is_scam = "HA (SCAM) ⚠️" if entity.scam else "Yo'q (Ishonchli)"
+            dc_id = getattr(entity.photo, 'dc_id', 'Noma\'lum') if entity.photo else "Mavjud emas"
+
+            # 1. Umumiy guruhlar
+            common_chats_res = await client(GetCommonChatsRequest(user_id=entity.id, max_id=0, limit=100))
+            common_titles = [c.title for c in common_chats_res.chats]
+            common_str = ", ".join(common_titles) if common_titles else "Umumiy guruhlar topilmadi"
+
+            # 2. Ismlar va Username tarixi (SangMata & Arxiv)
+            await event.edit("🛰 **FULL OSINT:** Ismlar tarixi va global bazalar tekshirilmoqda (2/3)...")
+            name_history = await fetch_name_history(u_id)
+
+            # 3. Tashqi OSINT Manbalari havolalari
+            tgstat_link = f"https://tgstat.com/user/{entity.username}" if entity.username else f"https://tgstat.com/search?q={u_id}"
+            telepathy_link = f"https://telesint.io/search?id={u_id}"
+            global_search = f"https://lyzem.com/search?q={u_id}"
+
+            # 4. OSINT Database ga saqlash
+            user_data_record = {
+                "name": u_name,
+                "username": username,
+                "phone": phone,
+                "dc": dc_id,
+                "common_chats": common_titles,
+                "history": name_history
+            }
+            await save_to_osint_db(u_id, user_data_record)
+
+            report = (
+                f"🕵️‍♂️ **FULL TELEGRAM OSINT REPORT** 🕵️‍♂️\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"👤 **Asosiy Ism:** `{u_name}`\n"
+                f"🆔 **Telegram ID:** `{u_id}`\n"
+                f"🔗 **Username:** {username}\n"
+                f"📞 **Telefon:** `{phone}`\n"
+                f"⭐️ **Premium:** {is_premium} | **Verified:** {is_verified}\n"
+                f"🤖 **Bot:** {is_bot} | **Scam/Fake:** {is_scam}\n"
+                f"🌐 **DataCenter (DC):** `{dc_id}`\n"
+                f"📝 **Bio/Haqida:** {bio}\n\n"
+                f"👥 **Umumiy guruhlar ({len(common_titles)} ta):**\n"
+                f"_{common_str}_\n\n"
+                f"📜 **Ism va Username Tarixi:**\n"
+                f"```{name_history}```\n\n"
+                f"🌐 **Global Ochiq Manbalar & Agregatorlar:**\n"
+                f"• [TGStat Indeksatsiyasi]({tgstat_link})\n"
+                f"• [Telesint Baza Qidiruvi]({telepathy_link})\n"
+                f"• [Global Xabarlar & Mentions]({global_search})\n"
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"💾 *Ma'lumotlar avtomatik ravishda #OSINT_DATABASE xotirasiga saqlandi.*"
+            )
+            await event.edit(report, link_preview=False)
+
+        except Exception as e:
+            await event.edit(f"❌ OSINT Tahlilda xatolik: `{e}`")
+
+    # 4. .info
     elif cmd in [".info", ".stat"]:
         uptime = format_duration(time.time() - BOT_START_TIME)
         on_desc = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 Ochiq"
-        st_count = len(DATA_STORAGE.get("story_targets", {}))
-        auto_stat_str = "🟢 Faol (6s)" if AUTO_STATUS_RUNNING else "🔴 Ochiq"
-        auto_read_str = "🟢 Yoqilgan" if AUTO_READ_ENABLED else "🔴 Ochiq"
+        db_count = len(OSINT_CACHE)
         
         stat_text = (
-            f"📊 **USERBOT STATISTIKASI:**\n\n"
+            f"📊 **OSINT USERBOT HOLATI:**\n\n"
             f"⏳ **Uptime:** {uptime}\n"
-            f"📶 **24/7 Signal Online:** {on_desc}\n"
-            f"🎭 **Auto Emoji Status:** {auto_stat_str}\n"
-            f"👁 **Auto-Read:** {auto_read_str}\n"
-            f"📸 **Kuzatuvdagi Storylar:** {st_count} ta"
+            f"📶 **24/7 Online Signal:** {on_desc}\n"
+            f"🗄 **Bazada saqlangan profillar:** {db_count} ta\n"
+            f"🛠 **Asosiy buyruq:** `.osint <id/@username>`"
         )
         await event.edit(stat_text)
 
-@client.on(events.NewMessage(incoming=True))
-async def handle_incoming(event):
-    if AUTO_READ_ENABLED and event.is_private:
-        try:
-            await event.mark_read()
-        except Exception:
-            pass
-
 async def handle_ping_web(request):
-    return web.Response(text="Supreme Assistant Bot is running 24/7")
+    return web.Response(text="Supreme OSINT Userbot is running 24/7")
 
 async def main():
     await client.start()
-    await init_storage()
+    await init_osint_storage()
 
     app = web.Application()
     app.router.add_get('/', handle_ping_web)
@@ -381,8 +255,7 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
 
-    asyncio.create_task(story_monitoring_loop())
-    logging.info("Supreme Userbot muvaffaqiyatli ishga tushdi!")
+    logging.info("Full OSINT Userbot muvaffaqiyatli ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
