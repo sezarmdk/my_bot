@@ -43,25 +43,22 @@ else:
     client = TelegramClient("ob_test_session", API_ID, API_HASH)
 
 async def ultra_online_worker():
-    """Telegram'da 1 soniya ham oflayn bo'lmasdan 100% online turish mexanizmi"""
     global ONLINE_RUNNING
     while ONLINE_RUNNING:
         try:
-            # 1. Serverga to'g'ridan-to'g'ri faol status signali
             await client(UpdateStatusRequest(offline=False))
-
-            # 2. Saqlangan xabarlarda "typing" signalini yoqish (Telegram'ni tirik ushlab turadi)
-            await client(SetTypingRequest(
-                peer="me",
-                action=SendMessageTypingAction()
-            ))
-
-            # 3. Har 10 soniyada signal beriladi (Telegram 30 soniyada oflayn qilmasligi uchun)
+            try:
+                await client(SetTypingRequest(
+                    peer="me",
+                    action=SendMessageTypingAction()
+                ))
+            except Exception:
+                pass
             await asyncio.sleep(10)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logging.error(f"Online worker xatolik: {e}")
+            logging.error(f"Worker xatosi: {e}")
             await asyncio.sleep(5)
 
 @client.on(events.NewMessage(outgoing=True))
@@ -75,18 +72,16 @@ async def handle_commands(event):
     parts = text.split(maxsplit=1)
     cmd = parts[0].lower()
 
-    # ==================== [.on] ====================
     if cmd == ".on":
         if ONLINE_RUNNING:
-            await event.edit("ℹ️ **100% Online rejim allaqachon faol!**")
+            await event.edit("ℹ️ **Online rejim allaqachon yoqilgan!**")
             return
 
         ONLINE_RUNNING = True
         ONLINE_START_TIME = time.time()
         ONLINE_TASK = asyncio.create_task(ultra_online_worker())
-        await event.edit("🟢 **100% Uzluksiz 24/7 Online rejim yoqildi!**\n⚡️ Interval: Har 10 soniyada dual-signal.")
+        await event.edit("🟢 **100% Doimiy Online yoqildi!**")
 
-    # ==================== [.off] ====================
     elif cmd == ".off":
         if ONLINE_RUNNING:
             ONLINE_RUNNING = False
@@ -94,39 +89,42 @@ async def handle_commands(event):
                 ONLINE_TASK.cancel()
             ONLINE_TASK = None
             ONLINE_START_TIME = None
-            await client(UpdateStatusRequest(offline=True))
-            await event.edit("🔴 **Online rejim to'xtatildi (Oflayn).**")
+            try:
+                await client(UpdateStatusRequest(offline=True))
+            except Exception:
+                pass
+            await event.edit("🔴 **Online rejim to'xtatildi.**")
         else:
-            await event.edit("ℹ️ Online rejim faol emas edi.")
+            await event.edit("ℹ️ Online rejim faol emas.")
 
-    # ==================== [.info] ====================
     elif cmd in [".info", ".stat"]:
         uptime = format_duration(time.time() - BOT_START_TIME)
         status_text = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 O'chiq"
 
         msg = (
-            f"⚡️ **PURE 24/7 ONLINE USERBOT** ⚡️\n"
+            f"⚡️ **24/7 ONLINE USERBOT** ⚡️\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏳ **Bot Uptime:** {uptime}\n"
-            f"📶 **Online Holati:** {status_text}\n"
+            f"⏳ **Uptime:** {uptime}\n"
+            f"📶 **Status:** {status_text}\n"
             f"🛠 **Buyruqlar:** `.on`, `.off`, `.info`\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
         await event.edit(msg)
 
-async def handle_ping_web(request):
-    return web.Response(text="100% 24/7 Pure Online Userbot is running")
+async def handle_ping(request):
+    return web.Response(text="Bot is running")
 
 async def main():
     await client.start()
 
     app = web.Application()
-    app.router.add_get('/', handle_ping_web)
+    app.router.add_get('/', handle_ping)
+    app.router.add_get('/ping', handle_ping)
     runner = web.AppRunner(app)
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
 
-    logging.info("Pure Online Userbot muvaffaqiyatli ishga tushdi!")
+    logging.info("Userbot muvaffaqiyatli ulandi va ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
