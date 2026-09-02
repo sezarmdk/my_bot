@@ -8,7 +8,11 @@ from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.types import SendMessageTypingAction
 from telethon.tl.functions.account import UpdateStatusRequest
-from telethon.tl.functions.messages import SetTypingRequest, GetDialogFiltersRequest
+from telethon.tl.functions.messages import (
+    SetTypingRequest,
+    GetDialogFiltersRequest,
+    ReadHistoryRequest
+)
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
@@ -21,9 +25,9 @@ BOT_START_TIME = time.time()
 ONLINE_START_TIME = None
 ONLINE_TASK = None
 ONLINE_RUNNING = False
+AUTO_READ_ENABLED = False
 
-# Eng xavfsiz va uzilishsiz interval: 7 soniya
-HEARTBEAT_INTERVAL = 7
+PING_INTERVAL = 10
 
 UZ_TZ = timezone(timedelta(hours=5))
 def get_uz_time(): return datetime.now(UZ_TZ)
@@ -45,36 +49,41 @@ if SESSION_STRING:
 else:
     client = TelegramClient("ob_test_session", API_ID, API_HASH)
 
-async def ultra_heartbeat_worker():
-    """Triple-Action Heartbeat: Telegram serverida mutlaq uzilishsiz onlayn ushlab turish"""
+async def absolute_online_worker():
+    """Full Ghost-Write Ping + ReadHistory + MTProto Action"""
     global ONLINE_RUNNING
     while ONLINE_RUNNING:
         try:
-            # 1-harakat: Rasmiy Onlayn statusi
-            status_coro = client(UpdateStatusRequest(offline=False))
+            # 1. Ghost-Write (Saved Messages ga yozib darhol o'chirish)
+            try:
+                ghost_msg = await client.send_message("me", "⚡️")
+                await ghost_msg.delete()
+            except Exception:
+                pass
 
-            # 2-harakat: Saqlangan xabarlarda yozmoqda (typing) simulyatsiyasi
-            typing_coro = client(SetTypingRequest(
-                peer="me",
-                action=SendMessageTypingAction()
-            ))
+            # 2. Saqlangan xabarlarni o'qilgan qilish (Read History)
+            try:
+                await client(ReadHistoryRequest(peer="me", max_id=0))
+            except Exception:
+                pass
 
-            # 3-harakat: Papkalar keshini so'rash (Ilova ochiq va faol ekanligining to'g'ridan-to'g'ri isboti)
-            ping_coro = client(GetDialogFiltersRequest())
+            # 3. Parallel MTProto signallari: Status + Typing + Kesh
+            status_task = client(UpdateStatusRequest(offline=False))
+            typing_task = client(SetTypingRequest(peer="me", action=SendMessageTypingAction()))
+            cache_task = client(GetDialogFiltersRequest())
 
-            # Uchalasi parallel bajariladi — server hech qachon shubhalanmaydi
-            await asyncio.gather(status_coro, typing_coro, ping_coro, return_exceptions=True)
+            await asyncio.gather(status_task, typing_task, cache_task, return_exceptions=True)
 
-            await asyncio.sleep(HEARTBEAT_INTERVAL)
+            await asyncio.sleep(PING_INTERVAL)
         except asyncio.CancelledError:
             break
         except Exception as e:
-            logging.error(f"Heartbeat xatosi: {e}")
+            logging.error(f"Worker xatosi: {e}")
             await asyncio.sleep(3)
 
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
-    global ONLINE_START_TIME, ONLINE_TASK, ONLINE_RUNNING
+    global ONLINE_START_TIME, ONLINE_TASK, ONLINE_RUNNING, AUTO_READ_ENABLED
 
     text = (event.raw_text or "").strip()
     if not text.startswith("."):
@@ -86,13 +95,13 @@ async def handle_commands(event):
     # ==================== [.on] ====================
     if cmd == ".on":
         if ONLINE_RUNNING:
-            await event.edit("ℹ️ **Ultra 100% Online rejim allaqachon faol!**")
+            await event.edit("ℹ️ **Mutlaq Online rejim allaqachon faol!**")
             return
 
         ONLINE_RUNNING = True
         ONLINE_START_TIME = time.time()
-        ONLINE_TASK = asyncio.create_task(ultra_heartbeat_worker())
-        await event.edit("⚡️ **Ultra 24/7 Uzluksiz Online yoqildi!**\n🛰 Usul: *Triple-Action Heartbeat (7s)*")
+        ONLINE_TASK = asyncio.create_task(absolute_online_worker())
+        await event.edit("⚡️ **Mutlaq 100% 24/7 Online yoqildi!**\n🛰 Usul: *Ghost-Write (10s) + Multi-Action Engine*")
 
     # ==================== [.off] ====================
     elif cmd == ".off":
@@ -106,28 +115,49 @@ async def handle_commands(event):
                 await client(UpdateStatusRequest(offline=True))
             except Exception:
                 pass
-            await event.edit("🔴 **Online rejim to'xtatildi.**")
+            await event.edit("🔴 **Online rejim to'xtatildi (Oflayn).**")
         else:
             await event.edit("ℹ️ Online rejim faol emas edi.")
+
+    # ==================== [.autoread] ====================
+    elif cmd == ".autoread":
+        AUTO_READ_ENABLED = True
+        await event.edit("🟢 **Auto-Read (Avto-o'qish) yoqildi!**\nYangi shaxsiy xabarlar darhol o'qilgan qilinadi.")
+
+    # ==================== [.unread] ====================
+    elif cmd == ".unread":
+        AUTO_READ_ENABLED = False
+        await event.edit("🔴 **Auto-Read to'xtatildi.**")
 
     # ==================== [.info] ====================
     elif cmd in [".info", ".stat"]:
         uptime = format_duration(time.time() - BOT_START_TIME)
         status_text = f"🟢 Faol ({format_duration(time.time() - ONLINE_START_TIME)})" if ONLINE_START_TIME else "🔴 O'chiq"
+        read_st = "🟢 Yoqilgan" if AUTO_READ_ENABLED else "🔴 O'chiq"
 
         msg = (
-            f"⚡️ **ULTRA ONLINE USERBOT (V2)** ⚡️\n"
+            f"⚡️ **ABSOLUTE 24/7 ONLINE USERBOT** ⚡️\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏳ **Bot Uptime:** {uptime}\n"
+            f"⏳ **Uptime:** {uptime}\n"
             f"📶 **Onlayn Holati:** {status_text}\n"
-            f"🛰 **Rejim:** Triple-Action Heartbeat (7s)\n"
-            f"🛠 **Buyruqlar:** `.on`, `.off`, `.info`\n"
+            f"👁 **Auto-Read Holati:** {read_st}\n"
+            f"🛰 **Mexanizm:** Ghost-Write (10s) + Multi-Action\n"
+            f"🛠 **Buyruqlar:** `.on`, `.off`, `.autoread`, `.unread`, `.info`\n"
             f"━━━━━━━━━━━━━━━━━━━━"
         )
         await event.edit(msg)
 
+# ==================== [AUTO-READ LISTENER] ====================
+@client.on(events.NewMessage(incoming=True))
+async def handle_incoming(event):
+    if AUTO_READ_ENABLED and event.is_private:
+        try:
+            await event.mark_read()
+        except Exception:
+            pass
+
 async def handle_ping(request):
-    return web.Response(text="Ultra 24/7 Userbot is Active")
+    return web.Response(text="Absolute Online & AutoRead Bot is Running 24/7")
 
 async def main():
     await client.start()
@@ -139,7 +169,7 @@ async def main():
     await runner.setup()
     await web.TCPSite(runner, '0.0.0.0', PORT).start()
 
-    logging.info("Ultra Userbot muvaffaqiyatli ishga tushdi!")
+    logging.info("Userbot muvaffaqiyatli ishga tushdi!")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
