@@ -33,20 +33,23 @@ HUNTER_RUNNING = False
 HUNTER_TASK = None
 NAME_QUEUE = asyncio.Queue()
 
-TOTAL_COMBOS = 46656
+TOTAL_COMBOS = 33696
 CHECKED_COUNT = 0
 FOUND_COUNT = 0
 FOUND_BOTS = []
 
 FAST_PING_INTERVAL = 4
-STREAM_DELAY = 1.2  # Ban/FloodWait tushmasligi uchun optimal oraliq
+STREAM_DELAY = 1.0
 
 client1 = TelegramClient(StringSession(SESSION_1), API_ID, API_HASH) if SESSION_1 else TelegramClient("ob_session_1", API_ID, API_HASH)
 client2 = TelegramClient(StringSession(SESSION_2), API_ID, API_HASH) if SESSION_2 else None
 
 def generate_combinations():
-    chars = string.ascii_lowercase + string.digits
-    combos = [''.join(p) + 'bot' for p in itertools.product(chars, repeat=3)]
+    # 1-belgi FAQAT harf (Telegram raqam bilan boshlashga ruxsat bermaydi)
+    letters = string.ascii_lowercase
+    all_chars = string.ascii_lowercase + string.digits
+    
+    combos = [c1 + c2 + c3 + 'bot' for c1 in letters for c2 in all_chars for c3 in all_chars]
     random.shuffle(combos)
     return combos
 
@@ -75,33 +78,28 @@ async def multi_online_worker():
         await asyncio.sleep(FAST_PING_INTERVAL)
 
 async def stream_hunter_worker(cli, worker_name):
-    """Faqat bitta /newbot berib, to'xtovsiz username oqimini yuboruvchi dvijok"""
     global HUNTER_RUNNING, CHECKED_COUNT, FOUND_COUNT, FOUND_BOTS
     bot_father = "@BotFather"
 
     while HUNTER_RUNNING:
         try:
-            async with cli.conversation(bot_father, timeout=20) as conv:
-                # 1. Boshlanishida eski holatni tozalash va yangi bot ochish
-                await conv.send_message("/cancel")
-                await conv.get_response()
-
+            async with cli.conversation(bot_father, timeout=25) as conv:
+                # Faqat bitta /newbot va nom yuboriladi
                 await conv.send_message("/newbot")
                 r1 = await conv.get_response()
 
-                if "Alright, a new bot" not in r1.raw_text:
+                if "Alright, a new bot" in r1.raw_text:
+                    await conv.send_message(f"Master_{random.randint(100, 999)}")
+                    r2 = await conv.get_response()
+                    if "Good. Now let's choose a username" not in r2.raw_text:
+                        await asyncio.sleep(2)
+                        continue
+                elif "Good. Now let's choose a username" not in r1.raw_text:
+                    # Agar allaqachon nom so'rab turgan bo'lmasa, kutib qayta urinadi
                     await asyncio.sleep(2)
                     continue
 
-                # 2. Botga boshlang'ich ixtiyoriy nom berish
-                await conv.send_message(f"Master_{random.randint(100, 999)}")
-                r2 = await conv.get_response()
-
-                if "Good. Now let's choose a username" not in r2.raw_text:
-                    await asyncio.sleep(2)
-                    continue
-
-                # 3. DOIMIY OQIM SIKLI: BotFather username so'rab turgan holatda ketma-ket yuborish
+                # CHEKSIZ OQIM: /cancel YO'Q, faqat yangi username yuboriladi
                 while HUNTER_RUNNING:
                     target_username = await NAME_QUEUE.get()
                     CHECKED_COUNT += 1
@@ -110,7 +108,7 @@ async def stream_hunter_worker(cli, worker_name):
                     resp = await conv.get_response()
                     resp_text = resp.raw_text or ""
 
-                    # Agar muvaffaqiyatli yaratilsa (bo'sh username topilsa)
+                    # Bo'sh nom topildi va bot yaratildi
                     if "Done! Congratulations" in resp_text:
                         FOUND_COUNT += 1
                         FOUND_BOTS.append(f"@{target_username}")
@@ -118,37 +116,23 @@ async def stream_hunter_worker(cli, worker_name):
                             f"🎉 **3-HARFLI BOT TOPILDI VA YARATILDI!** 🎉\n\n"
                             f"🤖 **Username:** `@{target_username}`\n"
                             f"👤 **Oluvchi:** {worker_name}\n"
-                            f"📦 **BotFather Ma'lumotlari:**\n\n{resp_text}"
+                            f"📦 **Ma'lumotlar:**\n\n{resp_text}"
                         )
                         await cli.send_message("me", alert)
                         logging.info(f"[{worker_name}] TOPILDI: @{target_username}")
                         NAME_QUEUE.task_done()
-                        # Yangi bot yaratilgani uchun tashqi siklga chiqib yana /newbot bilan boshlaydi
-                        break
+                        break  # Bot yaratilgach, keyingi bot uchun yangidan boshlaydi
 
-                    # Agar username band bo'lsa, BotFather o'zi qaytadan yuborishni kutadi
-                    elif "already taken" in resp_text:
-                        logging.info(f"[{worker_name}] Band: @{target_username}")
+                    # Band bo'lsa yoki xato bo'lsa hech qanday /cancel yo'q, shunchaki keyingisini yuboradi
+                    else:
+                        logging.info(f"[{worker_name}] Rad etildi: @{target_username}")
                         NAME_QUEUE.task_done()
                         await asyncio.sleep(STREAM_DELAY)
-
-                    # Agar boshqa biror kutilmagan javob bersa
-                    else:
-                        logging.warning(f"[{worker_name}] Kutilmagan javob: {resp_text[:50]}")
-                        NAME_QUEUE.task_done()
-                        await conv.send_message("/cancel")
-                        await conv.get_response()
-                        break
 
         except FloodWaitError as fe:
             logging.warning(f"[{worker_name}] FloodWait: {fe.seconds}s kutilmoqda...")
             await asyncio.sleep(fe.seconds + 2)
         except asyncio.TimeoutError:
-            logging.warning(f"[{worker_name}] Timeout! BotFather bilan qayta bog'lanilmoqda...")
-            try:
-                await cli.send_message(bot_father, "/cancel")
-            except Exception:
-                pass
             await asyncio.sleep(2)
         except asyncio.CancelledError:
             break
@@ -198,7 +182,7 @@ def setup_client_handlers(cli):
 
         elif cmd == ".hunt":
             if HUNTER_RUNNING:
-                await event.edit("ℹ️ **Oqimli qidiruv jarayoni allaqachon ketmoqda!**")
+                await event.edit("ℹ️ **Qidiruv allaqachon ketmoqda!**")
                 return
 
             combos = generate_combinations()
@@ -211,11 +195,11 @@ def setup_client_handlers(cli):
             HUNTER_TASK = asyncio.gather(*tasks)
             acc_num = 2 if (client2 and client2.is_connected()) else 1
             await event.edit(
-                f"🚀 **Oqimli Bot Ovchi ishga tushdi!**\n\n"
+                f"🚀 **Toza Oqimli Bot Ovchi boshlandi!**\n\n"
                 f"👥 **Faol profillar:** {acc_num} ta\n"
+                f"🔡 **Bosh harf:** Faqat lotin harflari (raqamsiz)\n"
                 f"🔢 **Kombinatsiyalar:** {TOTAL_COMBOS:,} ta\n"
-                f"⚡️ **Rejim:** Uzluksiz oqim (faqat username yuboriladi, ortiqcha buyruqlarsiz)\n"
-                f"🎯 Bo'sh nom topilsa token Saqlangan xabarlarga yuboriladi."
+                f"⚡️ Hech qanday /cancel yo'q, to'xtovsiz yuboriladi."
             )
 
         elif cmd == ".unhunt":
@@ -238,7 +222,7 @@ def setup_client_handlers(cli):
             remaining = max(0, TOTAL_COMBOS - CHECKED_COUNT)
 
             msg = (
-                f"📊 **OQIMLI BOT OVCHI STATISTIKASI:**\n"
+                f"📊 **BOT OVCHI STATISTIKASI:**\n"
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"🎯 **Holat:** {hunt_st}\n"
                 f"👥 **Ishlayotgan profillar:** {acc_num} ta\n"
@@ -273,7 +257,7 @@ if client2:
     setup_client_handlers(client2)
 
 async def handle_ping(request):
-    return web.Response(text="Stream Hunter is Active")
+    return web.Response(text="Bot Hunter is Running")
 
 async def main():
     app = web.Application()
