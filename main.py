@@ -44,7 +44,7 @@ DEFAULT_BACKUP = {
         "1472444196": {"emoji_id": "5469770542288478598", "name": "Mohinur"},
         "8747110408": {"name": "сора"},
         "6235865301": {"emoji_id": "5474531384687091878", "name": "ㅤㅤㅤㅤㅤㅤㅤЗ"},
-        "6762269524": {"emoji_id": "5474531384687091878", "name": "𝗸𝗵𝗮𝗺𝗿𝗼𝘇"},
+        "6762269524": {"emoji_id": "5474531384687091878", "name": "𝗸𝗵𝗮𝗺𝗿oz"},
         "6425818276": {"emoji_id": "5474531384687091878", "name": "-"},
         "2117668225": {"emoji_id": "5474531384687091878", "name": "Berdiyorov"},
         "6771229865": {"emoji_id": "5474531384687091878", "name": "𝑃𝑎𝑟𝑖𝑧𝑜𝑑𝑎"},
@@ -53,7 +53,8 @@ DEFAULT_BACKUP = {
         "8726838128": {"name": "khamroz"},
         "5998202318": {"name": "‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌⁠‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌‌Fayoz..."},
         "7438053481": {"name": "Hoff"},
-        "1883697098": {"name": "🕸️"}
+        "1883697098": {"name": "🕸️"},
+        "1571540159": {"name": "Blitz nemis tili markazi"}
     },
     "viewed_stories": {
         "7066878581": [234],
@@ -99,20 +100,18 @@ client = TelegramClient(StringSession(SESSION_1), API_ID, API_HASH) if SESSION_1
 async def send_log(text: str):
     target = APP_DATA.get("log_channel", "me")
     try:
-        # Raqamli kanal ID bo'lsa int formatga keltirish
         if isinstance(target, str) and (target.startswith("-100") or target.isdigit()):
             target_entity = int(target)
         else:
             target_entity = target
         await client.send_message(target_entity, text)
     except Exception as err:
-        logging.warning(f"Log kanalga ({target}) yuborib bo'lmadi: {err}. Saved Messages ga tashlanmoqda.")
+        logging.warning(f"Log kanalga ({target}) yuborib bo'lmadi: {err}")
         try:
-            await client.send_message("me", f"⚠️ **Log xatosi (Kanalga yetmadi):**\n{text}")
+            await client.send_message("me", f"⚠️ **Log (Kanalga yetmadi):**\n{text}")
         except Exception:
             pass
 
-# --- 24/7 ONLINE VORKER ---
 async def ping_worker():
     global ONLINE_RUNNING
     step = 0
@@ -131,24 +130,35 @@ async def ping_worker():
         step += 1
         await asyncio.sleep(FAST_PING_INTERVAL)
 
-# --- XATOSIZ REAKSIYA YUBORISH (UNIVERSAL TL-OBJECT) ---
-async def send_reaction_safe(entity, story_id, emoji_id):
-    try:
-        if emoji_id:
-            reaction_obj = [ReactionCustomEmoji(document_id=int(emoji_id))]
-        else:
-            reaction_obj = [ReactionEmoji(emoticon="❤️")]
+# --- XATOSIZ STORY REAKSIYASI (RO'YXAT EMAS, ANIQ TL-OBYЕKT) ---
+async def send_story_reaction(entity, story_id, emoji_id):
+    # 1. Custom Emoji bilan urinish (agar emoji_id bo'lsa)
+    if emoji_id:
+        try:
+            # Story uchun reaction ro'yxat emas, to'g'ridan-to'g'ri TLObject bo'lishi kerak
+            react_obj = ReactionCustomEmoji(document_id=int(emoji_id))
+            await client(SendReactionRequest(
+                peer=entity,
+                story_id=story_id,
+                reaction=react_obj
+            ))
+            return True, f"🌟 Custom (`{emoji_id}`)"
+        except Exception as e:
+            logging.warning(f"Custom emoji xatosi ({emoji_id}): {e}. Standart yurakka o'tilmoqda.")
 
+    # 2. Standart yurak (❤️) bilan reaksiya bosish
+    try:
+        react_obj = ReactionEmoji(emoticon="❤️")
         await client(SendReactionRequest(
             peer=entity,
             story_id=story_id,
-            reaction=reaction_obj
+            reaction=react_obj
         ))
-        return True, (f"🌟 Custom (`{emoji_id}`)" if emoji_id else "❤️ Like")
+        return True, "❤️ Like"
     except Exception as e:
         return False, str(e)
 
-# --- ULTRA-FAST STORY KUZATUVCHISI ---
+# --- TEZKOR STORY KUZATUVCHI ---
 async def story_watcher_worker():
     while True:
         try:
@@ -170,18 +180,17 @@ async def story_watcher_worker():
                     emoji_id = info.get("emoji_id")
                     target_name = info.get("name", str(target_id))
 
-                    # Barcha mavjud faol storilarni birma-bir tekshirish
                     for story in res.stories.stories:
                         s_id = story.id
                         if s_id not in seen_list:
-                            # 1. Ko'rilgan deb belgilash
+                            # 1. Storyni ko'rish
                             await client(ReadStoriesRequest(peer=entity, max_id=s_id))
                             seen_list.append(s_id)
                             APP_DATA["viewed_stories"][target_id_str] = list(set(seen_list))
                             save_data(APP_DATA)
 
-                            # 2. Reaksiya qo'yish (xatoliklarsiz)
-                            success, react_info = await send_reaction_safe(entity, s_id, emoji_id)
+                            # 2. Reaksiya qo'yish (TL-Object aniq uzatiladi)
+                            success, react_info = await send_story_reaction(entity, s_id, emoji_id)
 
                             status_icon = "🔥" if success else "⚠️"
                             log_msg = (
@@ -193,23 +202,22 @@ async def story_watcher_worker():
                                 f"⏱ **Vaqt:** `{datetime.now().strftime('%H:%M:%S')}`"
                             )
                             await send_log(log_msg)
-                            logging.info(f"Ko'rildi: {target_name} ({target_id}) -> Story #{s_id}")
+                            logging.info(f"Ko'rildi: {target_name} ({target_id}) -> Story #{s_id} ({react_info})")
                             await asyncio.sleep(0.5)
 
                 except FloodWaitError as fe:
                     await asyncio.sleep(fe.seconds + 1)
                 except Exception as ex:
-                    logging.debug(f"Target {target_id_str} xatosi: {ex}")
+                    logging.debug(f"Target {target_id_str} tekshirish xatosi: {ex}")
 
                 await asyncio.sleep(0.8)
 
-            await asyncio.sleep(2.0)
+            await asyncio.sleep(2.5)
 
         except Exception as e:
-            logging.error(f"Kuzatuv siklida xatolik: {e}")
+            logging.error(f"Kuzatuv umumiy sikl xatosi: {e}")
             await asyncio.sleep(4)
 
-# --- BUYRUQLAR ISHLOVCHISI ---
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
     global ONLINE_RUNNING, ONLINE_TASK, AUTO_READ_ENABLED, APP_DATA
@@ -221,7 +229,6 @@ async def handle_commands(event):
     parts = text.split()
     cmd = parts[0].lower()
 
-    # 1. .setlog — LOG KANALNI BELGILASH
     if cmd == ".setlog":
         if len(parts) > 1:
             target_log = parts[1]
@@ -229,18 +236,16 @@ async def handle_commands(event):
                 ent = await client.get_entity(int(target_log) if target_log.lstrip("-").isdigit() else target_log)
                 APP_DATA["log_channel"] = ent.id
                 save_data(APP_DATA)
-                await event.edit(f"✅ **Log kanali muvaffaqiyatli saqlandi:**\n📢 `{getattr(ent, 'title', ent.id)}` (`{ent.id}`)")
+                await event.edit(f"✅ **Log kanali belgilandi:**\n📢 `{getattr(ent, 'title', ent.id)}` (`{ent.id}`)")
                 await send_log("🔔 **Ushbu kanal muvaffaqiyatli Story Bot LOG kanali qilib belgilandi!**")
             except Exception as e:
-                await event.edit(f"❌ Kanalni aniqlab bo'lmadi: {e}")
+                await event.edit(f"❌ Kanal topilmadi: {e}")
         else:
-            # Agar chat ichida shunchaki .setlog yozilsa
             current_chat = await event.get_chat()
             APP_DATA["log_channel"] = current_chat.id
             save_data(APP_DATA)
             await event.edit(f"✅ **Ushbu chat/kanal LOG kanali qilib belgilandi:**\n`{getattr(current_chat, 'title', current_chat.id)}`")
 
-    # 2. .story — KUZATUVGA OLISH
     elif cmd == ".story":
         target = None
         emoji_id = None
@@ -263,7 +268,7 @@ async def handle_commands(event):
             target = await event.get_chat()
 
         if not target:
-            await event.edit("❌ Obyekt topilmadi!")
+            await event.edit("❌ Manzil topilmadi!")
             return
 
         t_id = str(target.id)
@@ -280,7 +285,7 @@ async def handle_commands(event):
 
         save_data(APP_DATA)
 
-        # Kuzatuvga olingan zahoti faol storilarini darhol tekshirish
+        # Mavjud faol storilarni birinchi ulanishdayoq tozalab ko'rish va like bosish
         try:
             entity = await client.get_input_entity(target)
             res = await client(GetPeerStoriesRequest(peer=entity))
@@ -288,7 +293,7 @@ async def handle_commands(event):
                 for story in res.stories.stories:
                     if story.id not in APP_DATA["viewed_stories"][t_id]:
                         await client(ReadStoriesRequest(peer=entity, max_id=story.id))
-                        await send_reaction_safe(entity, story.id, emoji_id)
+                        await send_story_reaction(entity, story.id, emoji_id)
                         APP_DATA["viewed_stories"][t_id].append(story.id)
                 save_data(APP_DATA)
         except Exception:
@@ -296,15 +301,14 @@ async def handle_commands(event):
 
         react_str = f"Maxsus Emoji (`{emoji_id}`)" if emoji_id else "❤️ Like"
         await event.edit(
-            f"🎯 **Kuzatuvga muvaffaqiyatli olindi!**\n\n"
+            f"🎯 **Kuzatuvga olindi!**\n\n"
             f"👤 **Nomi:** `{t_name}`\n"
             f"🆔 **ID:** `{t_id}`\n"
             f"🔥 **Reaksiya:** {react_str}\n"
-            f"⚡️ Mavjud va yangi barcha storilar soniyalar ichida ko'rib boriladi."
+            f"⚡️ Barcha mavjud va yangi storilar avtomatik ko'rib boriladi."
         )
         await send_log(f"➕ **Kuzatuvga qo'shildi:** `{t_name}` (`{t_id}`) | Reaksiya: {react_str}")
 
-    # 3. .unstory — KUZATUVDAN O'CHIRISH
     elif cmd == ".unstory":
         target_id = None
         if event.is_reply:
@@ -324,12 +328,11 @@ async def handle_commands(event):
             removed_name = APP_DATA["story_targets"][target_id].get("name", target_id)
             del APP_DATA["story_targets"][target_id]
             save_data(APP_DATA)
-            await event.edit(f"🗑 **Kuzatuvdan o'chirildi:** `{removed_name}` (`{target_id}`)")
+            await event.edit(f"🗑 **Kuzatuvdan chiqarildi:** `{removed_name}` (`{target_id}`)")
             await send_log(f"➖ **Kuzatuvdan olib tashlandi:** `{removed_name}` (`{target_id}`)")
         else:
-            await event.edit("ℹ️ Ushbu profil/kanal kuzatuv ro'yxatida topilmadi.")
+            await event.edit("ℹ️ Ushbu manzil kuzatuv ro'yxatida yo'q.")
 
-    # 4. .stat / .info — KUZATUV RO'YXATINI ANIQLIK BILAN CHIQARISH
     elif cmd in [".stat", ".info"]:
         targets = APP_DATA.get("story_targets", {})
         viewed = APP_DATA.get("viewed_stories", {})
@@ -348,8 +351,7 @@ async def handle_commands(event):
             v_count = len(viewed.get(tid, []))
 
             line = f"├ 👤 **{name}**\n│  └ 🆔 `{tid}` | {em_badge} | 👁 `{v_count}` ta"
-            
-            # Agar ID -100 bilan boshlansa yoki kanal bo'lsa
+
             if tid.startswith("-100") or tid.startswith("-"):
                 channels.append(line.replace("👤", "📢"))
             else:
@@ -364,29 +366,27 @@ async def handle_commands(event):
             f"👥 **Jami kuzatuvda:** `{len(targets)}` ta manba\n"
             f"📡 **Log kanali:** `{log_ch}`\n"
             f"📶 **24/7 Doimiy Online:** {on_st}\n"
-            f"📖 **Xabarlarni Auto-Read:** {read_st}\n"
+            f"📖 **Auto-Read:** {read_st}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"👤 **FOYDALANUVCHILAR:**\n"
             f"{section_users}\n\n"
             f"📢 **KANALLAR:**\n"
             f"{section_channels}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"🛠 **Tezkor buyruqlar:**\n"
-            f"• `.setlog @kanal` — Log kanalni almashtirish\n"
-            f"• `.story [link/id] [emoji_id]` — Kuzatuvga olish\n"
-            f"• `.unstory [link/id]` — Kuzatuvdan chiqarish\n"
-            f"• `.on` / `.off` — 24/7 Online\n"
-            f"• `.autoread` / `.unread` — Xabarlarni o'qish\n"
-            f"• `.backup` — Ma'lumotlarni nusxalash"
+            f"🛠 **Buyruqlar:**\n"
+            f"• `.setlog @kanal`\n"
+            f"• `.story [link/id] [emoji_id]`\n"
+            f"• `.unstory [link/id]`\n"
+            f"• `.on` / `.off`\n"
+            f"• `.autoread` / `.unread`\n"
+            f"• `.backup`"
         )
         await event.edit(msg)
 
-    # 5. .backup
     elif cmd == ".backup":
         dump = json.dumps(APP_DATA, ensure_ascii=False)
         await event.edit(f"#STORY_BOT_BACKUP\n`{dump}`")
 
-    # 6. .on / .off
     elif cmd == ".on":
         if ONLINE_RUNNING:
             await event.edit("ℹ️ 24/7 Online allaqachon faol.")
@@ -404,7 +404,6 @@ async def handle_commands(event):
         else:
             await event.edit("ℹ️ Online rejim o'chiq edi.")
 
-    # 7. .autoread / .unread
     elif cmd == ".autoread":
         AUTO_READ_ENABLED = True
         await event.edit("🟢 **Xabarlarni avtomatik o'qish (Auto-Read) yoqildi!**")
@@ -413,7 +412,6 @@ async def handle_commands(event):
         AUTO_READ_ENABLED = False
         await event.edit("🔴 **Xabarlarni avtomatik o'qish to'xtatildi.**")
 
-# AUTO-READ ISHLOVCHISI
 @client.on(events.NewMessage(incoming=True))
 async def handle_incoming(event):
     if AUTO_READ_ENABLED and event.is_private:
@@ -422,9 +420,8 @@ async def handle_incoming(event):
         except Exception:
             pass
 
-# RENDER PING HTTP SERVISI
 async def handle_http_ping(request):
-    return web.Response(text="Story Bot Pro is Active")
+    return web.Response(text="Story Bot Pro Fixed is Active")
 
 async def main():
     app = web.Application()
@@ -437,7 +434,7 @@ async def main():
     await client.start()
     asyncio.create_task(story_watcher_worker())
 
-    await send_log("💎 **Mukammal Story Watcher Pro ishga tushdi va faol kuzatuvda!**")
+    await send_log("💎 **Story Bot muvaffaqiyatli yangilandi: TLObject xatosi tuzatildi!**")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
