@@ -31,7 +31,7 @@ SESSION_1 = os.environ.get("SESSION_STRING")
 PORT = int(os.environ.get("PORT", 8080))
 
 DATA_FILE = "story_data.json"
-UZB_TZ = timezone(timedelta(hours=5))  # O'zbekiston vaqti (Toshkent UTC+5)
+UZB_TZ = timezone(timedelta(hours=5))
 
 DEFAULT_BACKUP = {
     "log_channel": os.environ.get("LOG_CHANNEL", "me"),
@@ -58,18 +58,7 @@ DEFAULT_BACKUP = {
         "1883697098": {"name": "🕸️"},
         "1571540159": {"name": "Blitz nemis tili markazi"}
     },
-    "viewed_stories": {
-        "7066878581": [234],
-        "8171643760": [143, 144],
-        "8328563840": [55],
-        "1802315819": [413],
-        "8726838128": [1],
-        "6771229865": [362, 363, 364, 365, 366, 367, 368, 369],
-        "8747110408": [143, 144, 145, 146, 147, 149, 154],
-        "6235865301": [265],
-        "7438053481": [76],
-        "8750101205": [6]
-    }
+    "viewed_stories": {}
 }
 
 def load_data():
@@ -89,7 +78,7 @@ def save_data(data):
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        logging.error(f"Faylga saqlashda xatolik: {e}")
+        logging.error(f"Ma'lumot saqlash xatosi: {e}")
 
 APP_DATA = load_data()
 
@@ -112,7 +101,7 @@ async def send_log(text: str):
             target_entity = target
         await client.send_message(target_entity, text)
     except Exception as err:
-        logging.warning(f"Log yetmadi: {err}")
+        logging.warning(f"Log jo'natish xatosi: {err}")
         try:
             await client.send_message("me", f"⚠️ **Log (Kanalga yetmadi):**\n{text}")
         except Exception:
@@ -137,22 +126,28 @@ async def ping_worker():
         await asyncio.sleep(FAST_PING_INTERVAL)
 
 async def send_story_reaction(entity, story_id, emoji_id):
+    # 1. Agar emoji_id bo'lsa
     if emoji_id:
         try:
             react_obj = ReactionCustomEmoji(document_id=int(emoji_id))
             await client(SendReactionRequest(peer=entity, story_id=story_id, reaction=react_obj))
             return True, f"🌟 Custom (`{emoji_id}`)"
-        except Exception:
-            pass
+        except FloodWaitError:
+            raise
+        except Exception as e:
+            logging.warning(f"Custom emoji xatosi ({emoji_id}): {e}. Standart yurakka o'tilmoqda.")
 
+    # 2. Standart yurak
     try:
         react_obj = ReactionEmoji(emoticon="❤️")
         await client(SendReactionRequest(peer=entity, story_id=story_id, reaction=react_obj))
         return True, "❤️ Like"
+    except FloodWaitError:
+        raise
     except Exception as e:
         return False, str(e)
 
-# --- TEZKOR INDIVIDUAL TEKSHIRUVCHI (PARALLEL WORKER) ---
+# --- INDIVIDUAL TARGET UCHUN AUTO KUZATUVCHI ---
 async def check_target_stories(target_id_str, info):
     try:
         target_id = int(target_id_str)
@@ -169,28 +164,32 @@ async def check_target_stories(target_id_str, info):
         for story in res.stories.stories:
             s_id = story.id
             if s_id not in seen_list:
-                # Bir vaqtda ko'rish va like bosish
-                await client(ReadStoriesRequest(peer=entity, max_id=s_id))
-                seen_list.append(s_id)
-                APP_DATA["viewed_stories"][target_id_str] = list(set(seen_list))
-                save_data(APP_DATA)
+                try:
+                    await client(ReadStoriesRequest(peer=entity, max_id=s_id))
+                    success, react_info = await send_story_reaction(entity, s_id, emoji_id)
+                    if success:
+                        seen_list.append(s_id)
+                        APP_DATA["viewed_stories"][target_id_str] = list(set(seen_list))
+                        save_data(APP_DATA)
 
-                success, react_info = await send_story_reaction(entity, s_id, emoji_id)
-                status_icon = "🔥" if success else "⚠️"
-
-                log_msg = (
-                    f"⚡️ **YANGI STORY ANIQLANDI VA KO'RILDI!**\n\n"
-                    f"👤 **Manba:** `{target_name}`\n"
-                    f"🆔 **ID:** `{target_id}`\n"
-                    f"🎬 **Story ID:** `{s_id}`\n"
-                    f"{status_icon} **Reaksiya:** {react_info}\n"
-                    f"⏱ **Vaqt:** `{get_current_time()}` (Toshkent)"
-                )
-                await send_log(log_msg)
-                logging.info(f"Yangi story: {target_name} -> ID: {s_id}")
+                        log_msg = (
+                            f"⚡️ **YANGI STORY ANIQLANDI VA KO'RILDI!**\n\n"
+                            f"👤 **Manba:** `{target_name}`\n"
+                            f"🆔 **ID:** `{target_id}`\n"
+                            f"🎬 **Story ID:** `{s_id}`\n"
+                            f"🔥 **Reaksiya:** {react_info}\n"
+                            f"⏱ **Vaqt:** `{get_current_time()}` (Toshkent)"
+                        )
+                        await send_log(log_msg)
+                        logging.info(f"Ko'rildi: {target_name} -> Story #{s_id}")
+                except FloodWaitError as fe:
+                    logging.warning(f"FloodWait: {fe.seconds}s kutilmoqda")
+                    await asyncio.sleep(fe.seconds + 2)
+                except Exception:
+                    pass
 
     except FloodWaitError as fe:
-        await asyncio.sleep(fe.seconds + 1)
+        await asyncio.sleep(fe.seconds + 2)
     except Exception:
         pass
 
@@ -199,15 +198,14 @@ async def story_watcher_worker():
         try:
             targets = APP_DATA.get("story_targets", {})
             if targets:
-                # Barcha profillarni ketma-ket emas, parallel ravishda soniyada tekshirish
                 tasks = [check_target_stories(tid, info) for tid, info in list(targets.items())]
                 await asyncio.gather(*tasks, return_exceptions=True)
 
-            await asyncio.sleep(1.0)  # Atigi 1 soniyalik interval (Ultra tezkor)
+            await asyncio.sleep(2.0)
 
         except Exception as e:
             logging.error(f"Watcher xatosi: {e}")
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)
 
 @client.on(events.NewMessage(outgoing=True))
 async def handle_commands(event):
@@ -220,7 +218,7 @@ async def handle_commands(event):
     parts = text.split()
     cmd = parts[0].lower()
 
-    # 1. .allstory — BARCHA ESKI VA SAQLANGAN STORILARGA BIR VAQTDA BOSISH
+    # 1. .allstory — FLOODWAIT VA SOXTA O'TIB KETISHLARSIZ XATOSIZ REAKSIYA
     if cmd == ".allstory":
         target = None
         emoji_id = None
@@ -249,16 +247,15 @@ async def handle_commands(event):
         t_id = str(target.id)
         t_name = getattr(target, 'title', None) or getattr(target, 'first_name', None) or str(target.id)
 
-        # Agar targetda emoji_id bo'lmasa, saqlanganidan tekshirish
         if not emoji_id and t_id in APP_DATA["story_targets"]:
             emoji_id = APP_DATA["story_targets"][t_id].get("emoji_id")
 
-        await event.edit(f"🔍 **`{t_name}` ning barcha eski va faol storilari qidirilmoqda...**")
+        await event.edit(f"🔍 **`{t_name}` ning barcha arxiv va faol storilari tekshirilmoqda...**")
 
         entity = await client.get_input_entity(target)
         all_story_ids = set()
 
-        # 1. Faol (oxirgi 24-48 soatlik) storilar
+        # Faol storilar
         try:
             p_res = await client(GetPeerStoriesRequest(peer=entity))
             if p_res and getattr(p_res, "stories", None) and p_res.stories.stories:
@@ -267,7 +264,7 @@ async def handle_commands(event):
         except Exception:
             pass
 
-        # 2. Saqlangan (Pinned / Highlights / Arxiv) storilar
+        # Arxivlangan (Pinned/Highlights) storilar
         offset_id = 0
         while True:
             try:
@@ -284,54 +281,79 @@ async def handle_commands(event):
 
         total = len(all_story_ids)
         if total == 0:
-            await event.edit(f"ℹ️ **`{t_name}` da birorta ham faol yoki arxivlangan story topilmadi.**")
+            await event.edit(f"ℹ️ **`{t_name}` da birorta ham faol yoki arxiv story topilmadi.**")
             return
 
         sorted_ids = sorted(list(all_story_ids))
-        done = 0
-        react_type = f"Maxsus (`{emoji_id}`)" if emoji_id else "❤️ Like"
-
-        msg_template = (
-            f"⚡️ **BARCHA STORILARNI KO'RISH VA REAKSIYA BOSISH**\n\n"
-            f"👤 **Manba:** `{t_name}` (`{t_id}`)\n"
-            f"🎬 **Jami topilgan storilar:** `{total}` ta\n"
-            f"🔥 **Reaksiya:** {react_type}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏳ **Jarayon:** `{{done}}/{total}` ta bajarildi ({{percent:.1f}}%)\n"
-            f"🆔 **Hozirgi Story ID:** `{{curr_id}}`"
-        )
+        success_count = 0
+        react_label = f"🌟 (`{emoji_id}`)" if emoji_id else "❤️ Like"
 
         seen_list = APP_DATA["viewed_stories"].setdefault(t_id, [])
 
-        for s_id in sorted_ids:
+        for idx, s_id in enumerate(sorted_ids, 1):
+            retry_attempts = 3
+            reaction_ok = False
+
+            while retry_attempts > 0:
+                try:
+                    # O'qish
+                    await client(ReadStoriesRequest(peer=entity, max_id=s_id))
+                    # Reaksiya berish
+                    ok, _ = await send_story_reaction(entity, s_id, emoji_id)
+                    if ok:
+                        reaction_ok = True
+                        success_count += 1
+                        if s_id not in seen_list:
+                            seen_list.append(s_id)
+                    break
+
+                except FloodWaitError as fe:
+                    wait_sec = fe.seconds
+                    for remaining in range(wait_sec, 0, -5):
+                        try:
+                            await event.edit(
+                                f"⏳ **Telegram cheklovi (FloodWait)!**\n\n"
+                                f"👤 **Manba:** `{t_name}`\n"
+                                f"🎬 **Story:** `{idx}/{total}` ta\n"
+                                f"⚠️ **Telegram serveri kutishni talab qildi:** `{remaining} soniya`..."
+                            )
+                        except Exception:
+                            pass
+                        await asyncio.sleep(min(remaining, 5))
+                    retry_attempts -= 1
+
+                except Exception as ex:
+                    logging.warning(f"Story #{s_id} da xatolik: {ex}")
+                    await asyncio.sleep(1)
+                    retry_attempts -= 1
+
+            # Har bir story yangilanishini xabarda ko'rsatish
+            pct = (idx / total) * 100
             try:
-                await client(ReadStoriesRequest(peer=entity, max_id=s_id))
-                await send_story_reaction(entity, s_id, emoji_id)
-                if s_id not in seen_list:
-                    seen_list.append(s_id)
-            except FloodWaitError as fe:
-                await asyncio.sleep(fe.seconds + 1)
+                await event.edit(
+                    f"⚡️ **STORILARGA REAKSIYA BOSILMOQDA...**\n\n"
+                    f"👤 **Manba:** `{t_name}` (`{t_id}`)\n"
+                    f"🎬 **Jami:** `{total}` ta story\n"
+                    f"✅ **Muvaffaqiyatli:** `{success_count}` ta\n"
+                    f"📊 **Jarayon:** `{idx}/{total}` ({pct:.1f}%)\n"
+                    f"🔥 **Reaksiya:** {react_label}\n"
+                    f"🆔 **Hozirgi ID:** `#{s_id}`"
+                )
             except Exception:
                 pass
 
-            done += 1
-            if done % 2 == 0 or done == total:
-                pct = (done / total) * 100
-                try:
-                    await event.edit(msg_template.format(done=done, total=total, percent=pct, curr_id=s_id))
-                except Exception:
-                    pass
-            await asyncio.sleep(0.6)
+            # Server bilan barqaror ishlash uchun xavfsiz pauza (Anti-Spam)
+            await asyncio.sleep(1.3)
 
         save_data(APP_DATA)
         await event.edit(
-            f"🎉 **Barcha storilar muvaffaqiyatli yakunlandi!**\n\n"
+            f"🎉 **`.allstory` TO'LIQ VA ANIQ YAKUNLANDI!**\n\n"
             f"👤 **Manba:** `{t_name}` (`{t_id}`)\n"
-            f"✅ **Ko'rildi va like bosildi:** `{total}` ta\n"
-            f"🔥 **Reaksiya:** {react_type}\n"
-            f"⏱ **Tugallangan vaqt:** `{get_current_time()}`"
+            f"✅ **Haqiqatda bosilgan reaksiyalar:** `{success_count}/{total}` ta\n"
+            f"🔥 **Reaksiya turi:** {react_label}\n"
+            f"⏱ **Vaqt:** `{get_current_time()}`"
         )
-        await send_log(f"💥 **.allstory yakunlandi:** `{t_name}` ning barcha `{total}` ta storisiga like bosildi!")
+        await send_log(f"💥 **.allstory hisoboti:** `{t_name}` ning `{success_count}/{total}` ta storilariga to'liq reaksiya qo'yildi!")
 
     # 2. .setlog
     elif cmd == ".setlog":
@@ -388,8 +410,6 @@ async def handle_commands(event):
             APP_DATA["viewed_stories"][t_id] = []
 
         save_data(APP_DATA)
-
-        # Qo'shilgan zahoti hozirgi faol storilarini parallel yopish
         asyncio.create_task(check_target_stories(t_id, APP_DATA["story_targets"][t_id]))
 
         react_str = f"Maxsus Emoji (`{emoji_id}`)" if emoji_id else "❤️ Like"
@@ -469,11 +489,11 @@ async def handle_commands(event):
             f"{section_channels}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🛠 **Buyruqlar:**\n"
-            f"• `.allstory [link/id]` — Barcha eski/yangi storilarga like\n"
-            f"• `.story [link/id] [emoji_id]` — Tezkor kuzatuvga olish\n"
+            f"• `.allstory [link/id]` — Barcha arxiv/faol storilarga like\n"
+            f"• `.story [link/id] [emoji_id]` — Tezkor kuzatuv\n"
             f"• `.unstory [link/id]` — Kuzatuvdan chiqarish\n"
-            f"• `.setlog @kanal` — Log kanalni belgilash\n"
-            f"• `.on` / `.off` — 24/7 Doimiy Online\n"
+            f"• `.setlog @kanal` — Log kanalni o'rnatish\n"
+            f"• `.on` / `.off` — 24/7 Online\n"
             f"• `.autoread` / `.unread` — Xabarlarni o'qish\n"
             f"• `.backup` — Zaxira nusxa"
         )
@@ -520,7 +540,7 @@ async def handle_incoming(event):
             pass
 
 async def handle_http_ping(request):
-    return web.Response(text="Ultra-Fast Story Bot Pro is Active")
+    return web.Response(text="Story Bot Pro Anti-Flood is Active")
 
 async def main():
     app = web.Application()
@@ -533,7 +553,7 @@ async def main():
     await client.start()
     asyncio.create_task(story_watcher_worker())
 
-    await send_log("⚡️ **Ultra-Fast Story Bot muvaffaqiyatli ishga tushdi (Toshkent vaqti bilan)!**")
+    await send_log("💎 **Story Bot Pro (Anti-Flood va Haqiqiy Reaksiya Nazorati) faollashdi!**")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
