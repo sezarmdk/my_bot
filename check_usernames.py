@@ -15,8 +15,8 @@ API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
 SESSION_STR = os.environ.get("SESSION_STRING", "")
 
-MIN_DELAY = 3.0
-MAX_DELAY = 6.0
+MIN_DELAY = 3.5
+MAX_DELAY = 6.5
 BATCH_SIZE = 40
 BATCH_PAUSE_MIN = 60
 BATCH_PAUSE_MAX = 120
@@ -25,7 +25,6 @@ PROGRESS_FILE = "progress.json"
 AVAILABLE_FILE = "available.txt"
 TAKEN_FILE = "taken.txt"
 ERRORS_FILE = "errors.txt"
-
 TARGET_FILE = "log_target.txt"
 
 def get_target():
@@ -95,26 +94,29 @@ async def send_log(text):
     except Exception as e:
         if target != "me":
             try:
-                await client.send_message("me", f"⚠️ Log kanalga yuborilmadi: `{e}`\nXabar: {text}")
+                await client.send_message("me", f"⚠️ Log xatosi: `{e}`\nXabar: {text}")
             except Exception:
                 pass
 
 async def check_one(username):
-    while True:
+    # Cheksiz qotib qolmasligi uchun max 2 urinish
+    for attempt in range(2):
         try:
             result = await client(CheckUsernameRequest(username=username))
             return ("available" if result else "taken")
         except UsernameInvalidError:
             return "error"
         except FloodWaitError as e:
-            wait_time = e.seconds + random.uniform(5, 15)
-            await send_log(f"⚠️ **FloodWait:** `{wait_time:.0f} soniya` kutilmoqda...")
+            wait_time = e.seconds + random.uniform(5, 10)
+            await send_log(f"⚠️ **FloodWait:** `{wait_time:.0f}s` kutilmoqda...")
             await asyncio.sleep(wait_time)
-            STATS["current_delay"] = min(STATS["current_delay"] * 1.5, 30.0)
             continue
-        except Exception:
-            await asyncio.sleep(5)
+        except Exception as e:
+            await asyncio.sleep(3)
+            if attempt == 1:
+                return "error"
             continue
+    return "error"
 
 async def checker_worker():
     await asyncio.sleep(3)
@@ -126,12 +128,8 @@ async def checker_worker():
     counter = 0
 
     await send_log(
-        f"🛡 **Username Checker faol!**\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 **Jami kombinatsiyalar:** `{total_all} ta`\n"
-        f"⏳ **Tekshirilishi kerak:** `{len(remaining)} ta`\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 Log kanalini o'zgartirish: `.log @kanal_nomi` yoki `.log -100xxxx`"
+        f"🚀 **Qayta ishga tushirildi!**\n"
+        f"📊 Jami: `{total_all}` | Avvalgi: `{len(done)}` | Qolgan: `{len(remaining)}`"
     )
 
     for username in remaining:
@@ -149,7 +147,7 @@ async def checker_worker():
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"👉 @{username}\n"
                 f"🔗 {link}\n"
-                f"⚡ Hoziroq band qiling!"
+                f"⚡ Hoziroq oling!"
             )
             await send_log(msg_text)
             if get_target() != "me":
@@ -157,11 +155,12 @@ async def checker_worker():
                     await client.send_message("me", msg_text)
                 except Exception:
                     pass
-
         elif status == "taken":
             append_line(TAKEN_FILE, f"t.me/{username}")
             STATS["taken"] += 1
-            await send_log(f"❌ Band: `@{username}`")
+            # Har 25 ta band bo'lganda ixcham hisobot yuboradi (spam bo'lmasligi uchun)
+            if STATS["taken"] % 25 == 0:
+                await send_log(f"📌 Tekshirildi: 25 ta band (@{username} gacha)")
         else:
             append_line(ERRORS_FILE, f"t.me/{username}")
             STATS["errors"] += 1
@@ -187,7 +186,7 @@ async def handle_set_log(event):
     arg = event.pattern_match.group(1)
     if not arg:
         current = get_target()
-        await event.edit(f"📍 **Joriy log manzili:** `{current}`\nO'zgartirish uchun: `.log @kanal_nomi` yoki `.log -100xxxxxxxxx`")
+        await event.edit(f"📍 **Log manzili:** `{current}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
         return
 
     arg = arg.strip()
@@ -200,10 +199,10 @@ async def handle_set_log(event):
         entity = await client.get_entity(val)
         set_target(val)
         name = getattr(entity, 'title', getattr(entity, 'username', str(val)))
-        await event.edit(f"✅ **Log kanali muvaffaqiyatli belgilandi:**\n🎯 **Nomi:** {name}\n🆔 **ID:** `{val}`")
-        await client.send_message(val, "🔔 **Ushbu kanal botning yangi log manzili sifatida ulandi!**")
+        await event.edit(f"✅ **Log kanali belgilandi:** {name} (`{val}`)")
+        await client.send_message(val, "🔔 **Ushbu kanal bot logi sifatida tanlandi!**")
     except Exception as e:
-        await event.edit(f"❌ **Xatolik:** Kanal topilmadi yoki bot u yerda admin/a'zo emas!\n`{e}`")
+        await event.edit(f"❌ Xatolik: `{e}`")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.stat$"))
 async def handle_stat(event):
