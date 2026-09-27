@@ -1,5 +1,4 @@
 import asyncio
-import datetime
 import json
 import os
 import random
@@ -7,13 +6,16 @@ import string
 import time
 
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.functions.account import CheckUsernameRequest
 from telethon.errors import FloodWaitError, UsernameInvalidError
 
 # ==== SOZLAMALAR ====
 API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
-SESSION_NAME = "berdiyorov"
+
+# Sessiya Render maxfiy muhitidan (Env) olinadi
+SESSION_STR = os.environ.get("SESSION_STRING", "")
 
 MIN_DELAY = 3.0
 MAX_DELAY = 6.0
@@ -25,7 +27,6 @@ PROGRESS_FILE = "progress.json"
 AVAILABLE_FILE = "available.txt"
 TAKEN_FILE = "taken.txt"
 ERRORS_FILE = "errors.txt"
-# =====================
 
 STATS = {
     "available": 0,
@@ -67,7 +68,8 @@ def append_line(path, text):
     with open(path, "a") as f:
         f.write(text + "\n")
 
-client = TelegramClient(SESSION_NAME, API_ID, API_HASH)
+# StringSession orqali faylsiz va to'liq xavfsiz ulanish
+client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
 
 async def check_one(username):
     while True:
@@ -82,12 +84,12 @@ async def check_one(username):
             await asyncio.sleep(wait_time)
             STATS["current_delay"] = min(STATS["current_delay"] * 1.5, 30.0)
             continue
-        except Exception as e:
+        except Exception:
             await asyncio.sleep(5)
             continue
 
 async def checker_worker():
-    await asyncio.sleep(3)  # Bot to'liq ulanib olishi uchun kutish
+    await asyncio.sleep(3)
     all_combos = generate_combinations()
     done = load_progress()
     remaining = [u for u in all_combos if u not in done]
@@ -97,13 +99,12 @@ async def checker_worker():
 
     await client.send_message(
         "me",
-        f"🚀 **Username Checker to'liq rejimda ishga tushdi!**\n"
+        f"🛡 **Xavfsiz Username Checker ishga tushdi!**\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
         f"📊 **Jami kombinatsiyalar:** `{total_all} ta`\n"
-        f"✅ **Avval tekshirilgan:** `{len(done)} ta`\n"
         f"⏳ **Tekshirilishi kerak:** `{len(remaining)} ta`\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"💡 Holatni bilish uchun istalgan chatda `.stat` yozishingiz mumkin."
+        f"💡 Ma'lumot olish: `.stat`"
     )
 
     for username in remaining:
@@ -141,12 +142,10 @@ async def checker_worker():
 
         if counter % BATCH_SIZE == 0 and counter != len(remaining):
             pause = random.uniform(BATCH_PAUSE_MIN, BATCH_PAUSE_MAX)
-            await client.send_message("me", f"☕ **{BATCH_SIZE} ta so'rov yakunlandi.** Tanaffus: `{pause:.0f} soniya`...")
+            await client.send_message("me", f"☕ Tanaffus: `{pause:.0f} soniya`...")
             await asyncio.sleep(pause)
 
-    await client.send_message("me", "🏁 **Barcha kombinatsiyalar tekshirildi va yakunlandi!**")
-
-# ================= BUYRUQLAR =================
+    await client.send_message("me", "🏁 **Tekshiruv yakunlandi!**")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.stat$"))
 async def handle_stat(event):
@@ -165,21 +164,18 @@ async def handle_stat(event):
     hours = uptime_sec // 3600
     mins = (uptime_sec % 3600) // 60
 
-    text = f"""📊 **USERNAME CHECKER NAZORAT PANELI**
+    text = f"""📊 **CHECKER NAZORAT PANELI (Xavfsiz)**
 ━━━━━━━━━━━━━━━━━━━━
 📈 **Progress:** `[{bar}] {percent:.1f}%`
-🎯 **Jami kombinatsiyalar:** `{total} ta`
-✅ **Tekshirildi:** `{checked} ta`
-⏳ **Qoldi:** `{left} ta`
+🎯 **Jami:** `{total} ta` | ✅ **Tekshirildi:** `{checked} ta` | ⏳ **Qoldi:** `{left} ta`
 ━━━━━━━━━━━━━━━━━━━━
-🟢 **Sessiya davomida bo'sh:** `{STATS['available']} ta`
-🔴 **Band chiqqanlar:** `{STATS['taken']} ta`
-⚠️ **Xatoliklar:** `{STATS['errors']} ta`
+🟢 **Bo'sh:** `{STATS['available']} ta`
+🔴 **Band:** `{STATS['taken']} ta`
+⚠️ **Xatolik:** `{STATS['errors']} ta`
 ━━━━━━━━━━━━━━━━━━━━
-🔍 **Tekshirilayotgan:** `@{STATS['current_username']}`
-⭐️ **Oxirgi bo'sh username:** `{STATS['last_available']}`
-⏱ **Uptime:** `{hours} soat, {mins} daqiqa`
-⚡ **Kechikish oralig'i:** `{STATS['current_delay']:.1f}s`
+🔍 **Tekshirilmoqda:** `@{STATS['current_username']}`
+⭐️ **Oxirgi bo'sh:** `{STATS['last_available']}`
+⏱ **Vaqt:** `{hours} soat, {mins} daqiqa`
 ━━━━━━━━━━━━━━━━━━━━"""
     await event.edit(text)
 
@@ -188,13 +184,13 @@ async def handle_ping(event):
     s = time.time()
     msg = await event.edit("⚡ **Pinging...**")
     diff = (time.time() - s) * 1000
-    await msg.edit(f"🏓 **Pong!**\n⚡ **Tezlik:** `{diff:.2f} ms`\n🚀 **Status:** `Checker Faol`")
+    await msg.edit(f"🏓 **Pong!**\n⚡ **Tezlik:** `{diff:.2f} ms`\n🛡 **Holat:** `Xavfsiz rejimda faol`")
 
 async def main():
-    print(">>> Username Checker boti ishga tushmoqda... <<<")
+    if not SESSION_STR:
+        print("XATOLIK: SESSION_STRING kiritilmagan!")
+        return
     await client.start()
-    print(">>> Telegram Client ulandi! <<<")
-    # Tekshiruvchini parallel fonda yurgizamiz
     asyncio.create_task(checker_worker())
     await client.run_until_disconnected()
 
