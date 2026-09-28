@@ -9,7 +9,13 @@ from itertools import combinations, product
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import CheckUsernameRequest
-from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameOccupiedError, UsernamePurchaseAvailableError
+from telethon.errors import (
+    FloodWaitError, 
+    UsernameInvalidError, 
+    UsernameOccupiedError, 
+    UsernamePurchaseAvailableError,
+    MessageNotModifiedError
+)
 
 # ==== SOZLAMALAR ====
 API_ID = 32261789
@@ -175,16 +181,19 @@ def build_stat_text():
 ⭐️ **Oxirgi bo'sh nomlar:**
 {recents}
 ━━━━━━━━━━━━━━━━━━━━
-💡 To'xtatish: `.stopstat` | Yangilanish: har 10 soniyada"""
+💡 To'xtatish: `.stopstat`"""
 
 async def live_stat_updater():
     global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
     while LIVE_STATS_ACTIVE and LIVE_STAT_MSG:
         try:
             await LIVE_STAT_MSG.edit(build_stat_text())
-        except Exception:
+        except MessageNotModifiedError:
             pass
-        await asyncio.sleep(10)
+        except Exception as e:
+            await asyncio.sleep(5)
+            continue
+        await asyncio.sleep(5)
 
 async def checker_worker():
     await asyncio.sleep(3)
@@ -197,7 +206,7 @@ async def checker_worker():
     counter = 0
 
     await send_log(
-        f"🚀 **Yangi toza sessiyada ishga tushdi!**\n"
+        f"🚀 **Bot xatosiz qayta ishga tushirildi!**\n"
         f"📊 Jami: `{len(all_combos):,} ta` | Qolgan: `{len(remaining):,} ta`"
     )
 
@@ -256,24 +265,37 @@ async def checker_worker():
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.stat$"))
 async def handle_stat(event):
     global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
-    LIVE_STATS_ACTIVE = True
-    LIVE_STAT_MSG = event
-    await event.edit(build_stat_text())
-    asyncio.create_task(live_stat_updater())
+    try:
+        LIVE_STATS_ACTIVE = False
+        await asyncio.sleep(0.5)
+        # Edit qilishga urinamiz, agar kanal ruxsat bermasa yangi xabar qilib yuboramiz
+        try:
+            msg = await event.edit(build_stat_text())
+        except Exception:
+            msg = await event.respond(build_stat_text())
+        
+        LIVE_STAT_MSG = msg
+        LIVE_STATS_ACTIVE = True
+        asyncio.create_task(live_stat_updater())
+    except Exception as e:
+        print(f"Stat error: {e}")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.stopstat$"))
 async def handle_stop_stat(event):
     global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
     LIVE_STATS_ACTIVE = False
     LIVE_STAT_MSG = None
-    await event.edit("⏹ **Jonli statistika yangilanishi to'xtatildi.**")
+    try:
+        await event.edit("⏹ **Jonli statistika yangilanishi to'xtatildi.**")
+    except Exception:
+        await event.respond("⏹ **Jonli statistika yangilanishi to'xtatildi.**")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.log(?:\s+(.+))?$"))
 async def handle_set_log(event):
     arg = event.pattern_match.group(1)
     if not arg:
         current = get_target()
-        await event.edit(f"📍 **Joriy log kanali:** `{current}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
+        await event.respond(f"📍 **Joriy log kanali:** `{current}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
         return
 
     arg = arg.strip()
@@ -286,15 +308,18 @@ async def handle_set_log(event):
         entity = await client.get_entity(val)
         set_target(val)
         name = getattr(entity, 'title', getattr(entity, 'username', str(val)))
-        await event.edit(f"✅ **Log kanali belgilandi:** {name} (`{val}`)")
+        await event.respond(f"✅ **Log kanali belgilandi:** {name} (`{val}`)")
         await client.send_message(val, "🔔 **Ushbu kanal bot logi sifatida tanlandi!**")
     except Exception as e:
-        await event.edit(f"❌ Xatolik: `{e}`")
+        await event.respond(f"❌ Xatolik: `{e}`")
 
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.ping$"))
 async def handle_ping(event):
     s = time.time()
-    msg = await event.edit("⚡ **Pinging...**")
+    try:
+        msg = await event.edit("⚡ **Pinging...**")
+    except Exception:
+        msg = await event.respond("⚡ **Pinging...**")
     diff = (time.time() - s) * 1000
     await msg.edit(f"🏓 **Pong!**\n⚡ **Tezlik:** `{diff:.2f} ms`")
 
