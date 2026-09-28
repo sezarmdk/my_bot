@@ -16,15 +16,19 @@ from telethon.errors import (
     UsernamePurchaseAvailableError
 )
 
+# ==== MAKSIMAL OPTIMALLASHTIRILGAN TEZLIK SOZLAMALARI ====
 API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
 SESSION_STR = os.environ.get("SESSION_STRING", "")
 
-MIN_DELAY = 3.5
-MAX_DELAY = 6.0
-BATCH_SIZE = 40
-BATCH_PAUSE_MIN = 60
-BATCH_PAUSE_MAX = 120
+# Maksimal chegaradagi kechikish (0.8 - 1.4s)
+MIN_DELAY = 0.8
+MAX_DELAY = 1.4
+
+# Har 100 ta so'rovda qisqa 15-25 soniyalik dam olish
+BATCH_SIZE = 100
+BATCH_PAUSE_MIN = 15
+BATCH_PAUSE_MAX = 25
 
 PROGRESS_FILE = "progress.json"
 AVAILABLE_FILE = "available.txt"
@@ -58,7 +62,9 @@ STATS = {
     "current_username": "—",
     "recent_available": [],
     "start_time": time.time(),
-    "checked_count": 0
+    "checked_count": 0,
+    "current_min_delay": MIN_DELAY,
+    "current_max_delay": MAX_DELAY
 }
 
 def generate_combinations():
@@ -109,7 +115,12 @@ async def check_one(username):
         except (UsernameOccupiedError, UsernameInvalidError):
             return "taken"
         except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 5)
+            # FloodWait berilsa, kechikishni vaqtincha xavfsizroq qilamiz
+            wait_time = e.seconds + 3
+            await send_log(f"⚠️ **FloodWait:** `{wait_time}s` kutilmoqda... Tezlik avtomatik moslanadi.")
+            STATS["current_min_delay"] = min(STATS["current_min_delay"] + 0.5, 3.0)
+            STATS["current_max_delay"] = min(STATS["current_max_delay"] + 0.5, 4.5)
+            await asyncio.sleep(wait_time)
             continue
         except Exception as e:
             err_str = str(e).upper()
@@ -117,7 +128,7 @@ async def check_one(username):
                 return "fragment"
             if "OCCUPIED" in err_str or "INVALID" in err_str:
                 return "taken"
-            await asyncio.sleep(3)
+            await asyncio.sleep(1.5)
             return "error"
     return "error"
 
@@ -134,7 +145,7 @@ def get_stat_message():
     speed = int((checked / elapsed) * 3600) if elapsed > 10 else 0
     recents = "\n".join([f"  └ 🎯 @{u}" for u in STATS["recent_available"][-5:]]) or "  └ Hozircha yo'q"
 
-    return f"""📊 **CHECKER HISOBOTI (6-belgili)**
+    return f"""⚡ **TURBO CHECKER HISOBOTI (Maksimal Tezlik)**
 ━━━━━━━━━━━━━━━━━━━━
 📈 **Ko'rsatkich:** `{percent:.2f}%`
 🎯 **Jami:** `{total:,}` | ✅ **Ko'rildi:** `{checked:,}` | ⏳ **Qoldi:** `{left:,}`
@@ -145,19 +156,25 @@ def get_stat_message():
 ⚠️ **Boshqa:** `{STATS['errors']} ta`
 ━━━━━━━━━━━━━━━━━━━━
 🔍 **Tekshirilmoqda:** `@{STATS['current_username']}`
-⚡ **Tezlik:** `~{speed} ta/soat` | ⏱ **Vaqt:** `{elapsed_h}s {elapsed_m}m`
+🚀 **Hozirgi tezlik:** `~{speed} ta/soat`
+⏱ **Vaqt:** `{elapsed_h}s {elapsed_m}m`
+📍 **Log kanali:** `{get_target()}`
 ━━━━━━━━━━━━━━━━━━━━
 ⭐️ **Topilgan bo'sh nomlar:**
 {recents}"""
 
 async def checker_worker():
-    await asyncio.sleep(4)
+    await asyncio.sleep(3)
     all_combos = generate_combinations()
     done = load_progress()
     STATS["checked_count"] = len(done)
     remaining = [u for u in all_combos if u not in done]
 
-    await send_log(f"🟢 **Yangi toza oqim ishga tushdi!** Qolgan: `{len(remaining)} ta`")
+    await send_log(
+        f"⚡ **Turbo rejim ishga tushdi!**\n"
+        f"📊 Qolgan kombinatsiyalar: `{len(remaining):,} ta`\n"
+        f"🚀 Tezlik darajasi: `Maksimal (0.8s - 1.4s)`"
+    )
 
     counter = 0
     for username in remaining:
@@ -176,7 +193,7 @@ async def checker_worker():
                 await client.send_message("me", msg)
 
         elif status == "fragment":
-            append_line(FRAGMENT_FILE, f"t.me/{username}")
+            append_line(FRAGMENT_FILE, f"fragment.com/username/{username}")
             STATS["fragment"] += 1
 
         elif status == "taken":
@@ -190,24 +207,26 @@ async def checker_worker():
         save_progress(done)
         STATS["checked_count"] = len(done)
 
-        await asyncio.sleep(random.uniform(MIN_DELAY, MAX_DELAY))
+        # Maksimal tezkor pauza
+        delay = random.uniform(STATS["current_min_delay"], STATS["current_max_delay"])
+        await asyncio.sleep(delay)
 
+        # Har 100 tadan keyin kichik dam olish
         if counter % BATCH_SIZE == 0 and counter != len(remaining):
             pause = random.uniform(BATCH_PAUSE_MIN, BATCH_PAUSE_MAX)
             await asyncio.sleep(pause)
 
-# ================= BUYRUQLAR (Oddiy va Ishonchli) =================
+# ================= BUYRUQLAR =================
 
 @client.on(events.NewMessage)
 async def commands_handler(event):
-    # Faqat o'zingiz yozgan xabarlarga javob beradi (guruh/kanal farqi yo'q)
     if not event.out and event.sender_id != (await client.get_me()).id:
         return
 
     txt = (event.raw_text or "").strip()
 
     if txt == ".ping":
-        await event.reply("🏓 **Pong! Bot tirik va ishlayapti.**")
+        await event.reply("🏓 **Pong! Bot tirik va turbo tezlikda ishlamoqda.**")
 
     elif txt == ".stat":
         await event.reply(get_stat_message())
@@ -232,7 +251,7 @@ async def commands_handler(event):
 
 async def main():
     if not SESSION_STR:
-        print("XATOLIK: SESSION_STRING kiritilmagan!")
+        print("XATOLIK: SESSION_STRING topilmadi!")
         return
     await client.start()
     asyncio.create_task(checker_worker())
