@@ -56,11 +56,10 @@ STATS = {
     "recent_available": [],
     "start_time": time.time(),
     "current_delay": MIN_DELAY,
-    "total_combos": 0,
+    "total_combos": 20150,
     "checked_count": 0
 }
 
-# Jonli stat monitoringini boshqarish
 LIVE_STATS_ACTIVE = False
 LIVE_STAT_MSG = None
 
@@ -104,13 +103,6 @@ async def send_log(text):
                 pass
 
 async def check_one(username):
-    """
-    Aniq tekshiruv:
-    - Bo'sh bo'lsa: 'available'
-    - Fragment auksionida bo'lsa: 'fragment'
-    - Band bo'lsa: 'taken'
-    - Cheklov/Xato bo'lsa: 'error'
-    """
     for attempt in range(2):
         try:
             result = await client(CheckUsernameRequest(username=username))
@@ -120,9 +112,7 @@ async def check_one(username):
                 return "taken"
         except UsernamePurchaseAvailableError:
             return "fragment"
-        except UsernameOccupiedError:
-            return "taken"
-        except UsernameInvalidError:
+        except (UsernameOccupiedError, UsernameInvalidError):
             return "taken"
         except FloodWaitError as e:
             wait_time = e.seconds + random.uniform(5, 10)
@@ -133,9 +123,7 @@ async def check_one(username):
             err_str = str(e).upper()
             if "PURCHASE" in err_str:
                 return "fragment"
-            if "OCCUPIED" in err_str or "TAKEN" in err_str:
-                return "taken"
-            if "INVALID" in err_str:
+            if "OCCUPIED" in err_str or "TAKEN" in err_str or "INVALID" in err_str:
                 return "taken"
             await asyncio.sleep(3)
             if attempt == 1:
@@ -146,22 +134,21 @@ async def check_one(username):
 def build_stat_text():
     total = STATS["total_combos"] or 20150
     checked = STATS["checked_count"]
-    left = total - checked
+    left = max(0, total - checked)
     percent = (checked / total) * 100 if total > 0 else 0
 
-    bar_len = 12
+    bar_len = 10
     filled = int((percent / 100) * bar_len)
     bar = "█" * filled + "░" * (bar_len - filled)
 
-    elapsed = int(time.time() - STATS["start_time"])
+    elapsed = max(1, int(time.time() - STATS["start_time"]))
     elapsed_h = elapsed // 3600
     elapsed_m = (elapsed % 3600) // 60
     elapsed_s = elapsed % 60
 
-    # Tezlik va taxminiy qolgan vaqt (ETA)
-    speed_per_hour = int((checked / elapsed) * 3600) if elapsed > 10 else 0
+    speed_per_hour = int((checked / elapsed) * 3600) if elapsed > 15 else 0
     if speed_per_hour > 0 and left > 0:
-        eta_seconds = int((left / (speed_per_hour / 3600)))
+        eta_seconds = int(left / (speed_per_hour / 3600))
         eta_h = eta_seconds // 3600
         eta_m = (eta_seconds % 3600) // 60
         eta_str = f"{eta_h}s {eta_m}m"
@@ -170,7 +157,7 @@ def build_stat_text():
 
     recents = "\n".join([f"  └ 🎯 @{u}" for u in STATS["recent_available"][-5:]]) or "  └ Hozircha yo'q"
 
-    text = f"""⚡ **LIVE CHECKER NAZORAT PANELI (6-belgili)**
+    return f"""⚡ **LIVE CHECKER NAZORAT PANELI (6-belgili)**
 ━━━━━━━━━━━━━━━━━━━━
 📈 **Progress:** `[{bar}] {percent:.2f}%`
 🎯 **Jami:** `{total:,}` | ✅ **Ko'rildi:** `{checked:,}` | ⏳ **Qoldi:** `{left:,}`
@@ -181,29 +168,23 @@ def build_stat_text():
 ⚠️ **Xatolik / Chetlatilgan:** `{STATS['errors']} ta`
 ━━━━━━━━━━━━━━━━━━━━
 🔍 **Hozirgi tekshiruv:** `@{STATS['current_username']}`
-⚡ **Tezlik:** `~{speed_per_hour} ta/soat` | ⏳ **Qolgan vaqt (ETA):** `{eta_str}`
+⚡ **Tezlik:** `~{speed_per_hour} ta/soat` | ⏳ **ETA:** `{eta_str}`
 ⏱ **Faol vaqti:** `{elapsed_h:02d}:{elapsed_m:02d}:{elapsed_s:02d}`
 📍 **Log kanali:** `{get_target()}`
 ━━━━━━━━━━━━━━━━━━━━
-⭐️ **Oxirgi topilgan bo'sh nomlar:**
+⭐️ **Oxirgi bo'sh nomlar:**
 {recents}
 ━━━━━━━━━━━━━━━━━━━━
-💡 Jonli panelni to'xtatish: `.stopstat`"""
-    return text
+💡 To'xtatish: `.stopstat` | Yangilanish: har 10 soniyada"""
 
 async def live_stat_updater():
-    """Xabarni har 3 soniyada tahrirlab turuvchi orqa fon vazifasi"""
     global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
-    last_text = ""
     while LIVE_STATS_ACTIVE and LIVE_STAT_MSG:
         try:
-            new_text = build_stat_text()
-            if new_text != last_text:
-                await LIVE_STAT_MSG.edit(new_text)
-                last_text = new_text
+            await LIVE_STAT_MSG.edit(build_stat_text())
         except Exception:
             pass
-        await asyncio.sleep(3)
+        await asyncio.sleep(10)
 
 async def checker_worker():
     await asyncio.sleep(3)
@@ -216,10 +197,8 @@ async def checker_worker():
     counter = 0
 
     await send_log(
-        f"🚀 **Kengaytirilgan 6 harfli Checker ishga tushdi!**\n"
-        f"━━━━━━━━━━━━━━━━━━━━\n"
-        f"📊 **Jami:** `{len(all_combos):,} ta` | ⏳ **Tekshirilishi kerak:** `{len(remaining):,} ta`\n"
-        f"💡 Jonli nazorat: `.stat` | To'xtatish: `.stopstat`"
+        f"🚀 **Yangi toza sessiyada ishga tushdi!**\n"
+        f"📊 Jami: `{len(all_combos):,} ta` | Qolgan: `{len(remaining):,} ta`"
     )
 
     for username in remaining:
@@ -270,7 +249,7 @@ async def checker_worker():
             await send_log(f"☕ Tanaffus: `{pause:.0f} soniya`...")
             await asyncio.sleep(pause)
 
-    await send_log("🏁 **Barcha kombinatsiyalar to'liq tekshirib bo'lindi!**")
+    await send_log("🏁 **Barcha 20,150 ta kombinatsiya tekshirib bo'lindi!**")
 
 # ================= BUYRUQLAR =================
 
