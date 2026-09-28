@@ -13,8 +13,7 @@ from telethon.errors import (
     FloodWaitError, 
     UsernameInvalidError, 
     UsernameOccupiedError, 
-    UsernamePurchaseAvailableError,
-    MessageNotModifiedError
+    UsernamePurchaseAvailableError
 )
 
 # ==== SOZLAMALAR ====
@@ -66,8 +65,7 @@ STATS = {
     "checked_count": 0
 }
 
-LIVE_STATS_ACTIVE = False
-LIVE_STAT_MSG = None
+MY_ID = None
 
 def generate_combinations():
     letters = string.ascii_lowercase
@@ -152,18 +150,18 @@ def build_stat_text():
     elapsed_m = (elapsed % 3600) // 60
     elapsed_s = elapsed % 60
 
-    speed_per_hour = int((checked / elapsed) * 3600) if elapsed > 15 else 0
+    speed_per_hour = int((checked / elapsed) * 3600) if elapsed > 10 else 0
     if speed_per_hour > 0 and left > 0:
         eta_seconds = int(left / (speed_per_hour / 3600))
         eta_h = eta_seconds // 3600
         eta_m = (eta_seconds % 3600) // 60
-        eta_str = f"{eta_h}s {eta_m}m"
+        eta_str = f"{eta_h} soat {eta_m} daqiqa"
     else:
         eta_str = "Hisoblanmoqda..."
 
     recents = "\n".join([f"  └ 🎯 @{u}" for u in STATS["recent_available"][-5:]]) or "  └ Hozircha yo'q"
 
-    return f"""⚡ **LIVE CHECKER NAZORAT PANELI (6-belgili)**
+    return f"""📊 **CHECKER STATISTIKA HISOBOTI**
 ━━━━━━━━━━━━━━━━━━━━
 📈 **Progress:** `[{bar}] {percent:.2f}%`
 🎯 **Jami:** `{total:,}` | ✅ **Ko'rildi:** `{checked:,}` | ⏳ **Qoldi:** `{left:,}`
@@ -174,26 +172,13 @@ def build_stat_text():
 ⚠️ **Xatolik / Chetlatilgan:** `{STATS['errors']} ta`
 ━━━━━━━━━━━━━━━━━━━━
 🔍 **Hozirgi tekshiruv:** `@{STATS['current_username']}`
-⚡ **Tezlik:** `~{speed_per_hour} ta/soat` | ⏳ **ETA:** `{eta_str}`
-⏱ **Faol vaqti:** `{elapsed_h:02d}:{elapsed_m:02d}:{elapsed_s:02d}`
+⚡ **Tezlik:** `~{speed_per_hour} ta/soat`
+⏳ **Qolgan vaqt (ETA):** `{eta_str}`
+⏱ **Ishlash vaqti:** `{elapsed_h:02d}:{elapsed_m:02d}:{elapsed_s:02d}`
 📍 **Log kanali:** `{get_target()}`
 ━━━━━━━━━━━━━━━━━━━━
-⭐️ **Oxirgi bo'sh nomlar:**
-{recents}
-━━━━━━━━━━━━━━━━━━━━
-💡 To'xtatish: `.stopstat`"""
-
-async def live_stat_updater():
-    global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
-    while LIVE_STATS_ACTIVE and LIVE_STAT_MSG:
-        try:
-            await LIVE_STAT_MSG.edit(build_stat_text())
-        except MessageNotModifiedError:
-            pass
-        except Exception as e:
-            await asyncio.sleep(5)
-            continue
-        await asyncio.sleep(5)
+⭐️ **Topilgan bo'sh nomlar:**
+{recents}"""
 
 async def checker_worker():
     await asyncio.sleep(3)
@@ -206,8 +191,9 @@ async def checker_worker():
     counter = 0
 
     await send_log(
-        f"🚀 **Bot xatosiz qayta ishga tushirildi!**\n"
-        f"📊 Jami: `{len(all_combos):,} ta` | Qolgan: `{len(remaining):,} ta`"
+        f"🚀 **Bot xatolarsiz to'liq ishga tushdi!**\n"
+        f"📊 Jami: `{len(all_combos):,} ta` | Qolgan: `{len(remaining):,} ta`\n"
+        f"💡 Holatni ko'rish: `.stat` | Ping: `.ping`"
     )
 
     for username in remaining:
@@ -258,76 +244,58 @@ async def checker_worker():
             await send_log(f"☕ Tanaffus: `{pause:.0f} soniya`...")
             await asyncio.sleep(pause)
 
-    await send_log("🏁 **Barcha 20,150 ta kombinatsiya tekshirib bo'lindi!**")
+    await send_log("🏁 **Barcha kombinatsiyalar to'liq tekshirib bo'lindi!**")
 
-# ================= BUYRUQLAR =================
+# ================= BUYRUQLAR (Kanal va Shaxsiy chatlar uchun) =================
 
-@client.on(events.NewMessage(outgoing=True, pattern=r"^\.stat$"))
-async def handle_stat(event):
-    global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
-    try:
-        LIVE_STATS_ACTIVE = False
-        await asyncio.sleep(0.5)
-        # Edit qilishga urinamiz, agar kanal ruxsat bermasa yangi xabar qilib yuboramiz
-        try:
-            msg = await event.edit(build_stat_text())
-        except Exception:
-            msg = await event.respond(build_stat_text())
-        
-        LIVE_STAT_MSG = msg
-        LIVE_STATS_ACTIVE = True
-        asyncio.create_task(live_stat_updater())
-    except Exception as e:
-        print(f"Stat error: {e}")
+@client.on(events.NewMessage)
+async def handle_commands(event):
+    global MY_ID
+    sender_id = event.sender_id
 
-@client.on(events.NewMessage(outgoing=True, pattern=r"^\.stopstat$"))
-async def handle_stop_stat(event):
-    global LIVE_STATS_ACTIVE, LIVE_STAT_MSG
-    LIVE_STATS_ACTIVE = False
-    LIVE_STAT_MSG = None
-    try:
-        await event.edit("⏹ **Jonli statistika yangilanishi to'xtatildi.**")
-    except Exception:
-        await event.respond("⏹ **Jonli statistika yangilanishi to'xtatildi.**")
-
-@client.on(events.NewMessage(outgoing=True, pattern=r"^\.log(?:\s+(.+))?$"))
-async def handle_set_log(event):
-    arg = event.pattern_match.group(1)
-    if not arg:
-        current = get_target()
-        await event.respond(f"📍 **Joriy log kanali:** `{current}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
+    # Faqat o'zingiz bergan buyruqlarni qabul qiladi
+    if sender_id != MY_ID and not event.out:
         return
 
-    arg = arg.strip()
-    try:
-        val = int(arg)
-    except ValueError:
-        val = arg
+    text = event.raw_text.strip() if event.raw_text else ""
 
-    try:
-        entity = await client.get_entity(val)
-        set_target(val)
-        name = getattr(entity, 'title', getattr(entity, 'username', str(val)))
-        await event.respond(f"✅ **Log kanali belgilandi:** {name} (`{val}`)")
-        await client.send_message(val, "🔔 **Ushbu kanal bot logi sifatida tanlandi!**")
-    except Exception as e:
-        await event.respond(f"❌ Xatolik: `{e}`")
+    if text == ".stat":
+        await event.reply(build_stat_text())
 
-@client.on(events.NewMessage(outgoing=True, pattern=r"^\.ping$"))
-async def handle_ping(event):
-    s = time.time()
-    try:
-        msg = await event.edit("⚡ **Pinging...**")
-    except Exception:
-        msg = await event.respond("⚡ **Pinging...**")
-    diff = (time.time() - s) * 1000
-    await msg.edit(f"🏓 **Pong!**\n⚡ **Tezlik:** `{diff:.2f} ms`")
+    elif text == ".ping":
+        s = time.time()
+        reply_msg = await event.reply("⚡ **Pinging...**")
+        diff = (time.time() - s) * 1000
+        await reply_msg.edit(f"🏓 **Pong!**\n⚡ **Tezlik:** `{diff:.2f} ms`\n🟢 **Holat:** Faol ishlayapti")
+
+    elif text.startswith(".log"):
+        parts = text.split(maxsplit=1)
+        if len(parts) == 1:
+            await event.reply(f"📍 **Joriy log kanali:** `{get_target()}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
+            return
+        arg = parts[1].strip()
+        try:
+            val = int(arg)
+        except ValueError:
+            val = arg
+        try:
+            entity = await client.get_entity(val)
+            set_target(val)
+            name = getattr(entity, 'title', getattr(entity, 'username', str(val)))
+            await event.reply(f"✅ **Log kanali belgilandi:** {name} (`{val}`)")
+            await client.send_message(val, "🔔 **Ushbu kanal bot logi sifatida tanlandi!**")
+        except Exception as e:
+            await event.reply(f"❌ Xatolik: `{e}`")
 
 async def main():
+    global MY_ID
     if not SESSION_STR:
         print("XATOLIK: SESSION_STRING kiritilmagan!")
         return
     await client.start()
+    me = await client.get_me()
+    MY_ID = me.id
+    print(f">>> Bot faollashdi: {me.first_name} (ID: {MY_ID}) <<<")
     asyncio.create_task(checker_worker())
     await client.run_until_disconnected()
 
