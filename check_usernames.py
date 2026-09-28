@@ -8,9 +8,8 @@ import time
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import CheckUsernameRequest
-from telethon.errors import FloodWaitError, UsernameInvalidError
+from telethon.errors import FloodWaitError, UsernameInvalidError, UsernameOccupiedError
 
-# ==== SOZLAMALAR ====
 API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
 SESSION_STR = os.environ.get("SESSION_STRING", "")
@@ -99,19 +98,26 @@ async def send_log(text):
                 pass
 
 async def check_one(username):
-    # Cheksiz qotib qolmasligi uchun max 2 urinish
     for attempt in range(2):
         try:
             result = await client(CheckUsernameRequest(username=username))
-            return ("available" if result else "taken")
-        except UsernameInvalidError:
-            return "error"
+            if result is True:
+                return "available"
+            else:
+                return "taken"
+        except (UsernameOccupiedError, UsernameInvalidError):
+            # Telegram band yoki taqiqlangan deb hisoblasa, bu bo'sh emas
+            return "taken"
         except FloodWaitError as e:
             wait_time = e.seconds + random.uniform(5, 10)
             await send_log(f"⚠️ **FloodWait:** `{wait_time:.0f}s` kutilmoqda...")
             await asyncio.sleep(wait_time)
             continue
         except Exception as e:
+            err_str = str(e).upper()
+            # Fragment auksionida yoki band bo'lsa
+            if "PURCHASE" in err_str or "OCCUPIED" in err_str or "INVALID" in err_str:
+                return "taken"
             await asyncio.sleep(3)
             if attempt == 1:
                 return "error"
@@ -128,8 +134,8 @@ async def checker_worker():
     counter = 0
 
     await send_log(
-        f"🚀 **Qayta ishga tushirildi!**\n"
-        f"📊 Jami: `{total_all}` | Avvalgi: `{len(done)}` | Qolgan: `{len(remaining)}`"
+        f"🚀 **Tekshiruv davom etmoqda (Aniq rejim)!**\n"
+        f"📊 Jami: `{total_all}` | Tekshirilgan: `{len(done)}` | Qolgan: `{len(remaining)}`"
     )
 
     for username in remaining:
@@ -147,7 +153,7 @@ async def checker_worker():
                 f"━━━━━━━━━━━━━━━━━━━━\n"
                 f"👉 @{username}\n"
                 f"🔗 {link}\n"
-                f"⚡ Hoziroq oling!"
+                f"⚡ Hoziroq band qiling!"
             )
             await send_log(msg_text)
             if get_target() != "me":
@@ -158,13 +164,11 @@ async def checker_worker():
         elif status == "taken":
             append_line(TAKEN_FILE, f"t.me/{username}")
             STATS["taken"] += 1
-            # Har 25 ta band bo'lganda ixcham hisobot yuboradi (spam bo'lmasligi uchun)
             if STATS["taken"] % 25 == 0:
                 await send_log(f"📌 Tekshirildi: 25 ta band (@{username} gacha)")
         else:
             append_line(ERRORS_FILE, f"t.me/{username}")
             STATS["errors"] += 1
-            await send_log(f"⚠️ Xato: `@{username}`")
 
         done.add(username)
         save_progress(done)
@@ -179,14 +183,12 @@ async def checker_worker():
 
     await send_log("🏁 **Barcha usernamelar tekshirib yakunlandi!**")
 
-# ================= BUYRUQLAR =================
-
 @client.on(events.NewMessage(outgoing=True, pattern=r"^\.log(?:\s+(.+))?$"))
 async def handle_set_log(event):
     arg = event.pattern_match.group(1)
     if not arg:
         current = get_target()
-        await event.edit(f"📍 **Log manzili:** `{current}`\nO'zgartirish: `.log @kanal` yoki `.log -100xxx`")
+        await event.edit(f"📍 **Log manzili:** `{current}`\nO'zgartirish: `.log @kanal`")
         return
 
     arg = arg.strip()
