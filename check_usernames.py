@@ -7,33 +7,61 @@ import pytz
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateStatusRequest
+from telethon.tl.functions.messages import ReadHistoryRequest
+from telethon.tl.functions.channels import ReadHistoryRequest as ChannelReadHistoryRequest
 from telethon.tl.functions import PingRequest
 
 API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
 SESSION_STR = os.environ.get("SESSION_STRING", "")
 
-client = TelegramClient(StringSession(SESSION_STR), API_ID, API_HASH)
+# flood_sleep_threshold parametrini minimal qilib ulanishni barqarorlashtiramiz
+client = TelegramClient(
+    StringSession(SESSION_STR),
+    API_ID,
+    API_HASH,
+    connection_retries=None,
+    auto_reconnect=True,
+    retry_delay=1
+)
 
 ACTIVE_CHAT = None
 CLOCK_RUNNING = False
 UZ_TZ = pytz.timezone("Asia/Tashkent")
 
+# 1. ULTRA-TEZKOR AVTO-O'QISH (Instant Raw Read)
 @client.on(events.NewMessage(incoming=True))
-async def auto_read_handler(event):
+async def instant_read_handler(event):
     try:
-        await event.mark_read()
+        # Eng yengil va past darajadagi MTProto so'rovi
+        if event.is_channel:
+            await client(ChannelReadHistoryRequest(
+                channel=event.input_chat,
+                max_id=event.id
+            ))
+        else:
+            await client(ReadHistoryRequest(
+                peer=event.input_chat,
+                max_id=event.id
+            ))
     except Exception:
-        pass
+        try:
+            await event.mark_read()
+        except Exception:
+            pass
 
+# 2. DOIMIY 24/7 ONLINE (Super Keep-Alive)
 async def keep_online_worker():
     while True:
         try:
-            await client(UpdateStatusRequest(offline=False))
+            if client.is_connected():
+                await client(UpdateStatusRequest(offline=False))
         except Exception:
             pass
-        await asyncio.sleep(45)
+        # 25 soniya - doimiy onlayn bo'lish uchun ideal va xavfsiz oraliq
+        await asyncio.sleep(25)
 
+# 3. 15 SONIYALIK SOAT
 async def clock_worker():
     global CLOCK_RUNNING, ACTIVE_CHAT
     while CLOCK_RUNNING and ACTIVE_CHAT is not None:
@@ -46,6 +74,8 @@ async def clock_worker():
             pass
         await asyncio.sleep(15)
 
+# ================= BUYRUQLAR =================
+
 @client.on(events.NewMessage)
 async def commands_handler(event):
     global ACTIVE_CHAT, CLOCK_RUNNING
@@ -56,12 +86,10 @@ async def commands_handler(event):
     txt = (event.raw_text or "").strip()
 
     if txt == ".ping":
-        # Telegram DC serveri bilan to'g'ridan-to'g'ri soket aloqasi tezligini o'lchash
         start_time = time.perf_counter()
         await client(PingRequest(ping_id=0))
         latency = (time.perf_counter() - start_time) * 1000
-
-        await event.edit(f"🏓 **Pong!** `{latency:.2f} ms`\n🟢 Auto Read & Auto Online faol.")
+        await event.edit(f"🏓 **Pong!** `{latency:.2f} ms`\n🟢 Ultra Auto-Read & 24/7 Online faol.")
 
     elif txt == ".on":
         ACTIVE_CHAT = event.chat_id
@@ -93,7 +121,7 @@ async def main():
         return
     await client.start()
     asyncio.create_task(keep_online_worker())
-    print(">>> USERBOT ISHGA TUSHDI <<<")
+    print(">>> ULTRA USERBOT ISHGA TUSHDI <<<")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
