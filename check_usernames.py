@@ -7,6 +7,7 @@ import pytz
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
 from telethon.tl.functions.account import UpdateStatusRequest
+from telethon.tl.functions import PingRequest
 
 API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
@@ -18,7 +19,6 @@ ACTIVE_CHAT = None
 CLOCK_RUNNING = False
 UZ_TZ = pytz.timezone("Asia/Tashkent")
 
-# 1. Barcha kelgan yangi xabarlarni avtomatik o'qilgan qilish
 @client.on(events.NewMessage(incoming=True))
 async def auto_read_handler(event):
     try:
@@ -26,7 +26,6 @@ async def auto_read_handler(event):
     except Exception:
         pass
 
-# 2. Doimiy Onlayn ushlab turuvchi fon jarayoni
 async def keep_online_worker():
     while True:
         try:
@@ -35,39 +34,43 @@ async def keep_online_worker():
             pass
         await asyncio.sleep(45)
 
-# 3. Har 15 soniyada soat tashlab, o'sha zahoti o'chiradigan fon vazifasi
 async def clock_worker():
     global CLOCK_RUNNING, ACTIVE_CHAT
     while CLOCK_RUNNING and ACTIVE_CHAT is not None:
         try:
             now_str = datetime.now(UZ_TZ).strftime("%H:%M:%S")
             msg = await client.send_message(ACTIVE_CHAT, f"⏰ `{now_str}`")
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.3)
             await msg.delete()
-        except Exception as e:
-            print(f"Clock xatolik: {e}")
+        except Exception:
+            pass
         await asyncio.sleep(15)
-
-# ================= BUYRUQLAR =================
 
 @client.on(events.NewMessage)
 async def commands_handler(event):
     global ACTIVE_CHAT, CLOCK_RUNNING
 
-    # Faqat o'zingiz yozgan buyruqlarni qabul qiladi
     if not event.out and event.sender_id != (await client.get_me()).id:
         return
 
     txt = (event.raw_text or "").strip()
 
-    if txt == ".on":
+    if txt == ".ping":
+        # Telegram DC serveri bilan to'g'ridan-to'g'ri soket aloqasi tezligini o'lchash
+        start_time = time.perf_counter()
+        await client(PingRequest(ping_id=0))
+        latency = (time.perf_counter() - start_time) * 1000
+
+        await event.edit(f"🏓 **Pong!** `{latency:.2f} ms`\n🟢 Auto Read & Auto Online faol.")
+
+    elif txt == ".on":
         ACTIVE_CHAT = event.chat_id
         if not CLOCK_RUNNING:
             CLOCK_RUNNING = True
             asyncio.create_task(clock_worker())
         try:
-            m = await event.reply("✅ **Avto-soat faollashdi!** Har 15 soniyada tashlanib, darhol o'chiriladi.")
-            await asyncio.sleep(3)
+            m = await event.reply("✅ **Avto-soat faollashdi!**")
+            await asyncio.sleep(2)
             await m.delete()
             await event.delete()
         except Exception:
@@ -78,17 +81,11 @@ async def commands_handler(event):
         ACTIVE_CHAT = None
         try:
             m = await event.reply("⏹ **Avto-soat to'xtatildi.**")
-            await asyncio.sleep(3)
+            await asyncio.sleep(2)
             await m.delete()
             await event.delete()
         except Exception:
             pass
-
-    elif txt == ".ping":
-        s = time.time()
-        m = await event.reply("⚡ Ping...")
-        diff = (time.time() - s) * 1000
-        await m.edit(f"🏓 **Pong!** `{diff:.2f} ms`\n🟢 Auto Read & Auto Online faol.")
 
 async def main():
     if not SESSION_STR:
