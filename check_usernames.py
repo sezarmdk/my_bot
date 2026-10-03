@@ -1,13 +1,11 @@
 import asyncio
 import os
 import time
-import socket
 from datetime import datetime
 import pytz
 
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from telethon.network import ConnectionTCPFull
 from telethon.tl.functions.account import UpdateStatusRequest
 from telethon.tl.functions.messages import ReadHistoryRequest
 from telethon.tl.functions.channels import ReadHistoryRequest as ChannelReadHistoryRequest
@@ -17,33 +15,19 @@ API_ID = 32261789
 API_HASH = "06254a37741c127fd669909f57e67168"
 SESSION_STR = os.environ.get("SESSION_STRING", "")
 
-# Maxsus ultra-tezkor soket klassi (TCP buferini o'chiradi)
-class FastConnectionTCP(ConnectionTCPFull):
-    def _create_socket(self, *args, **kwargs):
-        sock = super()._create_socket(*args, **kwargs)
-        try:
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-        except Exception:
-            pass
-        return sock
-
 client = TelegramClient(
     StringSession(SESSION_STR),
     API_ID,
     API_HASH,
-    connection=FastConnectionTCP,
     connection_retries=None,
     auto_reconnect=True,
-    retry_delay=1,
-    request_retries=10
+    retry_delay=1
 )
 
 ACTIVE_CHAT = None
 CLOCK_RUNNING = False
 UZ_TZ = pytz.timezone("Asia/Tashkent")
 
-# 1. ULTRA-TEZKOR AVTO-O'QISH (Instant Raw Read)
 @client.on(events.NewMessage(incoming=True))
 async def instant_read_handler(event):
     try:
@@ -63,7 +47,6 @@ async def instant_read_handler(event):
         except Exception:
             pass
 
-# 2. AGRESSIV 24/7 ONLINE
 async def keep_online_worker():
     while True:
         try:
@@ -73,7 +56,6 @@ async def keep_online_worker():
             pass
         await asyncio.sleep(25)
 
-# 3. 15 SONIYALIK SOAT
 async def clock_worker():
     global CLOCK_RUNNING, ACTIVE_CHAT
     while CLOCK_RUNNING and ACTIVE_CHAT is not None:
@@ -86,8 +68,6 @@ async def clock_worker():
             pass
         await asyncio.sleep(15)
 
-# ================= BUYRUQLAR =================
-
 @client.on(events.NewMessage)
 async def commands_handler(event):
     global ACTIVE_CHAT, CLOCK_RUNNING
@@ -98,13 +78,11 @@ async def commands_handler(event):
     txt = (event.raw_text or "").strip()
 
     if txt == ".ping":
-        # Soket buferidan tozalangan to'g'ridan-to'g'ri MTProto ping
         t0 = time.perf_counter()
-        await client(PingRequest(ping_id=1))
+        await client(PingRequest(ping_id=0))
         t1 = time.perf_counter()
         latency = (t1 - t0) * 1000
-
-        await event.edit(f"⚡ **Turbo Pong!** `{latency:.2f} ms`\n🟢 TCP_NODELAY & Zero-Queue faol.")
+        await event.edit(f"🏓 **Pong!** `{latency:.2f} ms`\n🟢 Auto Read & 24/7 Online faol.")
 
     elif txt == ".on":
         ACTIVE_CHAT = event.chat_id
@@ -136,7 +114,7 @@ async def main():
         return
     await client.start()
     asyncio.create_task(keep_online_worker())
-    print(">>> ZERO-LATENCY USERBOT ISHGA TUSHDI <<<")
+    print(">>> USERBOT ISHGA TUSHDI <<<")
     await client.run_until_disconnected()
 
 if __name__ == "__main__":
